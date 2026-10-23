@@ -133,6 +133,7 @@ evaluation/
   gt/                       the public 5-minute ground truth
   results/                  the four baselines; put your submissions here
 starter/
+  README.md                 guide to starter notebooks, inputs, and tracking data
   baseline.py               the reference baseline, numpy only
   load_atd.py               read the tracking and line it up with video frames
   load_smart_tagging.py     read the tactical tagging as video-frame intervals
