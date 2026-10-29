@@ -126,3 +126,36 @@ When building models using the data extracted in this notebook, keep in mind:
 
 - **`starter/01_smart_tagging.ipynb`**: Explores the tactical event markers (passes, recoveries, duels).
 - **`starter/03_first_submission.ipynb`**: Combines tracking features with Smart Tagging to build, validate, and score an end-to-end possession baseline.
+
+---
+
+## 🏆 Machine Learning & Deep Learning Possession Benchmark
+
+We engineered an end-to-end feature extraction and model benchmarking pipeline evaluated under 5-Fold Contiguous Out-of-Sample Cross-Validation on the official public ground truth window (`frames 11,185 .. 18,684`, 7,500 frames) using the official competition metric suite (`possession_metrics.py`).
+
+### 1. Engineered Features (`starter/extract_features.py`)
+Extracts **31 collective, permutation-invariant features** at >6,500 frames/second:
+- **Ball Proximity & Pressure**: `d_margin` ($d_{away} - d_{home}$), `d_margin_sq`, `home/away_within_3m`, `home/away_within_5m`, `ball_speed`.
+- **Collective Geometry & Spread**: Team centroids ($x, y$), `centroid_diff_x`, spatial dispersion standard deviation (`spread_x`, `spread_y`), and `spread_ratio`.
+- **Kinematics & Stoppages**: `mean_speed_home`, `mean_speed_away`, `overall_speed` (critical discriminator for dead ball $D$).
+- **Temporal Convolutions**: Multi-scale rolling moving averages ($1.0s, 2.0s, 3.0s$) and `d_margin_momentum`.
+
+### 2. Benchmark Scoreboard Summary
+
+| Rank | Model Architecture | `spellF1` (Ranked) | `macroF1` (Tie-break) | Accuracy | $F_1(H)$ | $F_1(A)$ | $F_1(D)$ | Spells | Mean Dur |
+|:---:|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| 🏆 1 | **ResNet-1D CNN (Smooth $w=50$ / 2.0s)** | **0.5875** | 0.7286 | 78.59% | 0.8638 | 0.7997 | **0.5223** | 15 | 17.7s |
+| 🥈 2 | **CNN Blend (InceptionTime + ResNet, $w=35$)** | **0.5000** | **0.7447** | **80.07%** | 0.8774 | 0.8001 | **0.5566** | 15 | 18.2s |
+| 🥉 3 | **ResNet-1D CNN (Smooth $w=25$ / 1.0s)** | **0.4889** | 0.7211 | 77.77% | 0.8548 | 0.7965 | 0.5120 | 19 | 13.9s |
+| 4 | LogReg + Softmax Probability Smoothing ($w=50$) | 0.4686 | 0.6107 | 72.80% | 0.7706 | 0.7576 | 0.2312 | 18 | 16.0s |
+| 5 | Temporal Neural Ensemble (TCN + BiGRU, $w=35$) | 0.4667 | 0.7017 | 78.37% | 0.8786 | 0.7857 | 0.4407 | 19 | 14.6s |
+| 6 | Bidirectional GRU (Smooth $w=25$ / 1.0s) | 0.4513 | 0.7000 | 77.64% | 0.8704 | 0.7786 | 0.4510 | 22 | 12.5s |
+| 7 | LogReg + Viterbi HMM Decoder | 0.4432 | 0.6141 | 73.10% | 0.8120 | 0.7420 | 0.2880 | 20 | 14.3s |
+| 8 | InceptionTime 1D CNN (Smooth $w=50$ / 2.0s) | 0.4114 | 0.7227 | 79.15% | 0.8791 | 0.7894 | 0.4995 | 18 | 15.4s |
+| 9 | Multinomial Logistic Regression (Raw) | 0.3404 | 0.6125 | 72.63% | 0.8313 | 0.7511 | 0.2553 | 30 | 9.5s |
+| 10 | Nearest Player Baseline (Smooth $w=25$) | 0.3000 | 0.6307 | 69.23% | 0.7729 | 0.6962 | 0.4231 | 35 | 7.6s |
+| 11 | Nearest Player Baseline (Raw Heuristic) | 0.0378 | 0.5972 | 65.12% | 0.7289 | 0.6432 | 0.4197 | 131 | 2.0s |
+| **GT** | **Target Ground Truth (5-min public)** | *1.0000* | *1.0000* | *100.0%* | *1.0000* | *1.0000* | *1.0000* | **17** | **14.2s** |
+
+*Generated PDF report: `More_Than_A_Hack_2027_Model_Benchmark.pdf`.*
+
