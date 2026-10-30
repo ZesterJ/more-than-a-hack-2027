@@ -59,10 +59,10 @@ more-than-a-hack-2027/
 - **The Sync Mechanism**:
   - In the competition data, tracking frames are indexed to the **tactical camera** (frame 11,185 = first-half kickoff).
   - In the **broadcast video** (`BAR-ATH_broadcast.mp4`), the kickoff whistle blows at `04:45` and the first boot-to-ball contact occurs at **`04:45.12`** (broadcast frame `7,128`).
-- **Pre-Configured Offset (`4,057` frames)**:
-  - The app comes pre-calibrated with an exact offset of **`4,057` frames** ($11,185 - 7,128 = 4,057$).
-  - When you jump to **Kickoff (frame 11,185)**, the video automatically lines up to `04:45.12`.
-  - When the video reaches **`04:46.00`** (frame 11,210), the ball is rolling across the center circle exactly as shown in the match footage.
+- **Pre-Configured Offset (`4,013` frames)**:
+  - The app comes pre-calibrated with a default offset of **`4,013` frames**.
+  - When you jump to **Kickoff (frame 11,185)**, the video automatically lines up with the matching match moment.
+  - When the video plays, the minimap tracking dots match player motion on screen.
 - **Fine-Tuning Nudge**:
   - You can micro-adjust the alignment anytime using the **`[-1f]`** and **`[+1f]`** buttons, or by pressing **`Alt + ←`** / **`Alt + →`** on your keyboard.
 

@@ -330,7 +330,7 @@ def api_config():
         "fps": FPS,
         "pitch": [PITCH_LEN, PITCH_WID],
         "default_kickoff": 11185,
-        "default_video_offset": 4057,  # Broadcast frame 7,128 (04:45.12) = Tactical Frame 11,185 Kickoff
+        "default_video_offset": 4013,  # Calibrated kickoff alignment offset
         "video_detected": video_path is not None,
         "video_name": os.path.basename(video_path) if video_path else None,
         "user_labels_count": len(USER_LABELS),

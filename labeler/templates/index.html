@@ -500,10 +500,10 @@
             <span>Offset:</span>
             <button class="btn" id="btnOffsetMinus10" style="padding: 2px 4px; font-size: 0.68rem;" title="Nudge -10 frames (Alt+Shift+Left)">-10f</button>
             <button class="btn" id="btnOffsetMinus" style="padding: 2px 5px; font-size: 0.68rem;" title="Nudge -1 frame (Alt+Left)">-1f</button>
-            <input type="number" id="inputVideoOffset" value="4057" style="width: 52px; background: #0f172a; color: white; border: 1px solid #334155; padding: 2px 4px; font-size: 0.72rem; border-radius: 3px; text-align: center;" title="Frame offset between Tactical and Broadcast video">
+            <input type="number" id="inputVideoOffset" value="4013" style="width: 52px; background: #0f172a; color: white; border: 1px solid #334155; padding: 2px 4px; font-size: 0.72rem; border-radius: 3px; text-align: center;" title="Frame offset between Tactical and Broadcast video">
             <button class="btn" id="btnOffsetPlus" style="padding: 2px 5px; font-size: 0.68rem;" title="Nudge +1 frame (Alt+Right)">+1f</button>
             <button class="btn" id="btnOffsetPlus10" style="padding: 2px 4px; font-size: 0.68rem;" title="Nudge +10 frames (Alt+Shift+Right)">+10f</button>
-            <button class="btn" id="btnResetOffset" style="padding: 2px 6px; font-size: 0.68rem; background: #0284c7;" title="Reset offset to calibrated kickoff (4,057 frames)">Reset (4057)</button>
+            <button class="btn" id="btnResetOffset" style="padding: 2px 6px; font-size: 0.68rem; background: #0284c7;" title="Reset offset to default calibrated offset (4,013 frames)">Reset (4013)</button>
             <button class="btn" id="btnAlignKickoff" style="padding: 2px 6px; font-size: 0.68rem; background: #334155;" title="Calibrate current video frame as Kickoff (frame 11,185)">Calibrate</button>
           </div>
         </div>
@@ -700,9 +700,9 @@
     let spellsData = [];
     let ballHistory = [];
 
-    // Video Sync: 4:45 broadcast (285s * 25 = 7125) = frame 11,185 -> offset = 4,060
+    // Video Sync: default offset
     let videoLoaded = false;
-    let videoOffset = 4057;
+    let videoOffset = 4013;
     let isSeekingVideo = false;
 
     // Elements
@@ -1229,7 +1229,7 @@
       document.getElementById("btnOffsetPlus10").addEventListener("click", () => nudgeOffset(10));
 
       document.getElementById("btnResetOffset").addEventListener("click", () => {
-        videoOffset = 4057;
+        videoOffset = 4013;
         inputVideoOffset.value = videoOffset;
         if (videoLoaded) {
           matchVideo.currentTime = Math.max(0, (currentFrame - videoOffset) / fps);
