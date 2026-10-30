@@ -495,15 +495,16 @@
           <div class="video-badge" id="videoStatusTag">🟢 BAR-ATH_broadcast.mp4 (Sync: 4:45 Kickoff)</div>
           
           <div class="sync-controls">
-            <span>Video Time: <b id="txtBroadcastTime" style="color: #60a5fa;">04:45.00</b></span>
+            <span>Video: <b id="txtBroadcastTime" style="color: #60a5fa;">04:45.12</b></span>
             <span style="color: #64748b; margin: 0 4px;">|</span>
             <span>Offset:</span>
-            <button class="btn" id="btnOffsetMinus10" style="padding: 2px 4px; font-size: 0.68rem;" title="Nudge -10 frames">-10f</button>
+            <button class="btn" id="btnOffsetMinus10" style="padding: 2px 4px; font-size: 0.68rem;" title="Nudge -10 frames (Alt+Shift+Left)">-10f</button>
             <button class="btn" id="btnOffsetMinus" style="padding: 2px 5px; font-size: 0.68rem;" title="Nudge -1 frame (Alt+Left)">-1f</button>
-            <input type="number" id="inputVideoOffset" value="4057" style="width: 52px; background: #0f172a; color: white; border: 1px solid #334155; padding: 2px 4px; font-size: 0.72rem; border-radius: 3px; text-align: center;">
+            <input type="number" id="inputVideoOffset" value="4057" style="width: 52px; background: #0f172a; color: white; border: 1px solid #334155; padding: 2px 4px; font-size: 0.72rem; border-radius: 3px; text-align: center;" title="Frame offset between Tactical and Broadcast video">
             <button class="btn" id="btnOffsetPlus" style="padding: 2px 5px; font-size: 0.68rem;" title="Nudge +1 frame (Alt+Right)">+1f</button>
-            <button class="btn" id="btnOffsetPlus10" style="padding: 2px 4px; font-size: 0.68rem;" title="Nudge +10 frames">+10f</button>
-            <button class="btn" id="btnAlignKickoff" style="padding: 2px 6px; font-size: 0.7rem; background: #2563eb;" title="Align current video position to Kickoff (frame 11,185)">Sync KO</button>
+            <button class="btn" id="btnOffsetPlus10" style="padding: 2px 4px; font-size: 0.68rem;" title="Nudge +10 frames (Alt+Shift+Right)">+10f</button>
+            <button class="btn" id="btnResetOffset" style="padding: 2px 6px; font-size: 0.68rem; background: #0284c7;" title="Reset offset to calibrated kickoff (4,057 frames)">Reset (4057)</button>
+            <button class="btn" id="btnAlignKickoff" style="padding: 2px 6px; font-size: 0.68rem; background: #334155;" title="Calibrate current video frame as Kickoff (frame 11,185)">Calibrate</button>
           </div>
         </div>
 
@@ -793,10 +794,11 @@
 
     function updateBroadcastTimeDisplay() {
       const vTimeSec = Math.max(0, (currentFrame - videoOffset) / fps);
+      const vFrame = Math.max(0, currentFrame - videoOffset);
       const vm = Math.floor(vTimeSec / 60);
       const vs = Math.floor(vTimeSec % 60);
       const vms = Math.floor((vTimeSec - Math.floor(vTimeSec)) * 100);
-      txtBroadcastTime.textContent = `${String(vm).padStart(2, '0')}:${String(vs).padStart(2, '0')}.${String(vms).padStart(2, '0')}`;
+      txtBroadcastTime.textContent = `${String(vm).padStart(2, '0')}:${String(vs).padStart(2, '0')}.${String(vms).padStart(2, '0')} (f${vFrame.toLocaleString()})`;
     }
 
     async function prefetchChunk(start, length) {
@@ -1226,12 +1228,23 @@
       document.getElementById("btnOffsetPlus").addEventListener("click", () => nudgeOffset(1));
       document.getElementById("btnOffsetPlus10").addEventListener("click", () => nudgeOffset(10));
 
+      document.getElementById("btnResetOffset").addEventListener("click", () => {
+        videoOffset = 4057;
+        inputVideoOffset.value = videoOffset;
+        if (videoLoaded) {
+          matchVideo.currentTime = Math.max(0, (currentFrame - videoOffset) / fps);
+        }
+        updateBroadcastTimeDisplay();
+      });
+
       document.getElementById("btnAlignKickoff").addEventListener("click", () => {
         const vTime = matchVideo.currentTime;
-        videoOffset = 11185 - Math.round(vTime * fps);
-        inputVideoOffset.value = videoOffset;
-        alert(`Kickoff Synchronized! Offset calibrated to ${videoOffset} frames.`);
-        loadFrame(11185);
+        const newOffset = 11185 - Math.round(vTime * fps);
+        if (confirm(`Calibrate Kickoff (Tactical Frame 11,185) to current video position ${formatTime(vTime)} (Offset: ${newOffset})?`)) {
+          videoOffset = newOffset;
+          inputVideoOffset.value = videoOffset;
+          loadFrame(11185);
+        }
       });
     }
 
