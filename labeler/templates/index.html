@@ -1,0 +1,1522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Barca Vision Labeler -- Tactical & Video Annotation Studio</title>
+  <style>
+    :root {
+      --bg-dark: #0a0e14;
+      --card-bg: #141b24;
+      --card-border: #232d3d;
+      --pitch-green: #164528;
+      --barca-blue: #004d98;
+      --barca-red: #a50044;
+      --barca-gold: #edbb00;
+      --ath-red: #ee2524;
+      --ath-white: #ffffff;
+      --dead-yellow: #f59e0b;
+      --accent: #3b82f6;
+      --text-main: #f3f4f6;
+      --text-dim: #9ca3af;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-dark);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* Header */
+    header {
+      background: #0f1620;
+      border-bottom: 1px solid var(--card-border);
+      padding: 8px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .brand span.badge {
+      background: rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    button.btn {
+      background: #1e293b;
+      color: var(--text-main);
+      border: 1px solid #334155;
+      padding: 5px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+    }
+    button.btn:hover { background: #334155; }
+    button.btn-primary { background: #2563eb; border-color: #3b82f6; }
+    button.btn-primary:hover { background: #1d4ed8; }
+    button.btn-success { background: #16a34a; border-color: #22c55e; }
+    button.btn-success:hover { background: #15803d; }
+
+    /* Main Workspace Layout */
+    .workspace {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      background: #090d13;
+    }
+
+    /* Left Major Area: Video Viewing (68% width) */
+    .video-viewport {
+      flex: 68;
+      display: flex;
+      flex-direction: column;
+      padding: 8px 10px;
+      position: relative;
+      background: #090d13;
+      border-right: 1px solid var(--card-border);
+      min-width: 0;
+    }
+    .video-container {
+      position: relative;
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      background: #000000;
+      border-radius: 8px;
+      border: 2px solid #233142;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    video#matchVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #000000;
+    }
+    .video-overlay-bar {
+      position: absolute;
+      top: 8px;
+      left: 10px;
+      right: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 20;
+      pointer-events: none;
+    }
+    .video-badge {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(4px);
+      color: #60a5fa;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 4px;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      pointer-events: auto;
+    }
+    .sync-controls {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(4px);
+      padding: 3px 8px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.72rem;
+      border: 1px solid #334155;
+      pointer-events: auto;
+    }
+    .video-dropzone {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(17, 24, 34, 0.95);
+      border: 2px dashed #374151;
+      border-radius: 6px;
+      margin: 15px;
+      cursor: pointer;
+      z-index: 10;
+      transition: all 0.2s;
+    }
+    .video-dropzone:hover {
+      border-color: #3b82f6;
+      background: rgba(30, 41, 59, 0.95);
+    }
+
+    /* Right Sidebar: Minimap Radar + Telemetry (32% width) */
+    .sidebar {
+      flex: 32;
+      background: var(--card-bg);
+      display: flex;
+      flex-direction: column;
+      padding: 10px;
+      gap: 8px;
+      overflow-y: auto;
+      flex-shrink: 0;
+      min-width: 320px;
+      max-width: 440px;
+    }
+
+    /* Compact 2D Radar Canvas */
+    .radar-container {
+      width: 100%;
+      background: #111822;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      position: relative;
+    }
+    .radar-header {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      font-weight: 700;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .radar-canvas-box {
+      width: 100%;
+      position: relative;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1.5px solid #233142;
+      background: #164528;
+    }
+    canvas#pitchCanvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      aspect-ratio: 105.3 / 68.0;
+    }
+    .ball-occluded-banner {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(239, 68, 68, 0.9);
+      color: white;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+      letter-spacing: 0.4px;
+      display: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+      z-index: 15;
+      white-space: nowrap;
+    }
+
+    /* Cards */
+    .card {
+      background: #19222e;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .card-title {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      font-weight: 700;
+      margin-bottom: 5px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Possession Status Badge */
+    .status-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-align: center;
+      transition: all 0.2s ease;
+    }
+    .status-H { background: rgba(0, 77, 152, 0.4); border: 2px solid #3b82f6; color: #93c5fd; }
+    .status-A { background: rgba(238, 37, 36, 0.4); border: 2px solid #ef4444; color: #fca5a5; }
+    .status-D { background: rgba(245, 158, 11, 0.35); border: 2px solid #f59e0b; color: #fde68a; }
+    .status-X { background: rgba(55, 65, 81, 0.4); border: 2px dashed #4b5563; color: #9ca3af; }
+
+    /* Telemetry Grid */
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.78rem;
+      margin-bottom: 4px;
+    }
+    .stat-label { color: var(--text-dim); }
+    .stat-value { font-weight: 700; font-family: monospace; font-size: 0.82rem; }
+    .margin-bar-container {
+      width: 100%;
+      height: 6px;
+      background: #202a37;
+      border-radius: 3px;
+      position: relative;
+      margin-top: 3px;
+      overflow: hidden;
+    }
+    .margin-bar-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      height: 100%;
+      transition: width 0.1s linear, left 0.1s linear;
+    }
+
+    /* AI Card */
+    .ai-box {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #111822;
+      border: 1px solid #283548;
+      border-radius: 6px;
+      padding: 6px 8px;
+      margin-top: 2px;
+    }
+    .ai-pred {
+      font-weight: 800;
+      font-size: 0.88rem;
+    }
+    .ai-conf {
+      font-size: 0.7rem;
+      color: #9ca3af;
+    }
+
+    /* Rapid Labeling Hotkey Buttons */
+    .label-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 5px;
+      margin-top: 5px;
+    }
+    .btn-lbl {
+      padding: 7px 4px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      text-align: center;
+      transition: transform 0.1s;
+    }
+    .btn-lbl:active { transform: scale(0.96); }
+    .btn-lbl-H { background: #004d98; color: white; border-color: #3b82f6; }
+    .btn-lbl-A { background: #b91c1c; color: white; border-color: #ef4444; }
+    .btn-lbl-D { background: #b45309; color: white; border-color: #f59e0b; }
+    .btn-lbl-clear {
+      grid-column: span 3;
+      background: #1f2937;
+      color: #9ca3af;
+      border: 1px solid #374151;
+      padding: 5px;
+      font-size: 0.72rem;
+    }
+
+    /* Range Box */
+    .range-box {
+      background: #111822;
+      border: 1px solid #233142;
+      border-radius: 6px;
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .range-inputs {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.76rem;
+    }
+
+    /* Timeline & Scrubber */
+    .timeline-bar {
+      background: #0f1620;
+      border-top: 1px solid var(--card-border);
+      padding: 8px 16px 10px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .timeline-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .clock-display {
+      font-size: 1.05rem;
+      font-weight: 800;
+      font-family: monospace;
+      letter-spacing: 0.5px;
+      color: #60a5fa;
+    }
+    .playback-controls {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .ribbon-container {
+      position: relative;
+      height: 30px;
+      background: #1a2230;
+      border: 1px solid #2a374a;
+      border-radius: 6px;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    canvas#ribbonCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .playhead-marker {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: #ffffff;
+      box-shadow: 0 0 8px #ffffff;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .selection-range-marker {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: rgba(59, 130, 246, 0.35);
+      border-left: 2px solid #60a5fa;
+      border-right: 2px solid #60a5fa;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .hotkey-pill {
+      background: #374151;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 0.65rem;
+      font-family: monospace;
+      font-weight: 700;
+      margin-left: 3px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header>
+    <div class="brand">
+      <h1>⚽ Barca Vision Labeler</h1>
+      <span class="badge">Tactical Video Studio</span>
+    </div>
+
+    <div class="header-actions">
+      <input type="file" id="videoFileInput" accept="video/mp4,video/*" style="display: none;">
+      <button class="btn" id="btnSelectVideo" title="Choose another video file">
+        📂 Select Video
+      </button>
+      <button class="btn" id="btnLoadGT" title="Load official 5-minute competition ground truth as gold standard">
+        📥 Load Ref GT
+      </button>
+      <button class="btn" id="btnAutoAI" title="Pre-populate selected range using AI Heuristic">
+        ⚡ AI Fill
+      </button>
+      <button class="btn btn-primary" id="btnExportCSV" title="Export complete match submission file (frame,label)">
+        📄 Export CSV
+      </button>
+      <button class="btn btn-success" id="btnExportTrain" title="Export labeled subset formatted directly for ML training">
+        🚀 Export ML Set
+      </button>
+    </div>
+  </header>
+
+  <!-- Middle Interactive Stage -->
+  <div class="workspace">
+    
+    <!-- LEFT: MAIN VIDEO VIEWPORT -->
+    <div class="video-viewport">
+      <div class="video-container" id="videoContainer">
+        
+        <div class="video-overlay-bar">
+          <div class="video-badge" id="videoStatusTag">🟢 BAR-ATH_broadcast.mp4 (Sync: 4:45 Kickoff)</div>
+          
+          <div class="sync-controls">
+            <span>Video Time: <b id="txtBroadcastTime" style="color: #60a5fa;">04:45.00</b></span>
+            <span style="color: #64748b; margin: 0 4px;">|</span>
+            <span>Offset:</span>
+            <button class="btn" id="btnOffsetMinus10" style="padding: 2px 4px; font-size: 0.68rem;" title="Nudge -10 frames">-10f</button>
+            <button class="btn" id="btnOffsetMinus" style="padding: 2px 5px; font-size: 0.68rem;" title="Nudge -1 frame (Alt+Left)">-1f</button>
+            <input type="number" id="inputVideoOffset" value="4057" style="width: 52px; background: #0f172a; color: white; border: 1px solid #334155; padding: 2px 4px; font-size: 0.72rem; border-radius: 3px; text-align: center;">
+            <button class="btn" id="btnOffsetPlus" style="padding: 2px 5px; font-size: 0.68rem;" title="Nudge +1 frame (Alt+Right)">+1f</button>
+            <button class="btn" id="btnOffsetPlus10" style="padding: 2px 4px; font-size: 0.68rem;" title="Nudge +10 frames">+10f</button>
+            <button class="btn" id="btnAlignKickoff" style="padding: 2px 6px; font-size: 0.7rem; background: #2563eb;" title="Align current video position to Kickoff (frame 11,185)">Sync KO</button>
+          </div>
+        </div>
+
+        <!-- Video Fallback Dropzone (shown if server video not found) -->
+        <div class="video-dropzone" id="videoDropzone" style="display: none;">
+          <div style="font-size: 2.2rem; margin-bottom: 6px;">🎬</div>
+          <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 4px;">Select Match Video (.mp4)</div>
+          <div style="font-size: 0.75rem; color: #9ca3af;">Click here or drag & drop BAR-ATH_broadcast.mp4</div>
+        </div>
+
+        <!-- HTML5 Video Player -->
+        <video id="matchVideo" src="/api/video" playsinline preload="auto" muted></video>
+      </div>
+    </div>
+
+    <!-- RIGHT: MINIMAP RADAR & TELEMETRY CONTROLS -->
+    <div class="sidebar">
+      
+      <!-- 2D Tactical Pitch Minimap -->
+      <div class="radar-container">
+        <div class="radar-header">
+          <span>Tactical Radar Minimap</span>
+          <span style="font-size: 0.65rem; color: #60a5fa;">2D Metrica Tracking</span>
+        </div>
+        <div class="radar-canvas-box">
+          <div class="ball-occluded-banner" id="occludedBanner">⚠️ BALL OCCLUDED</div>
+          <canvas id="pitchCanvas" width="1053" height="680"></canvas>
+        </div>
+      </div>
+
+      <!-- Active Frame Possession Card -->
+      <div class="card">
+        <div class="card-title">Active Possession Label</div>
+        <div id="statusBadge" class="status-badge status-X">UNLABELED</div>
+        
+        <div class="label-actions">
+          <button class="btn-lbl btn-lbl-H" id="btnTagH">HOME <span class="hotkey-pill">H</span></button>
+          <button class="btn-lbl btn-lbl-A" id="btnTagA">AWAY <span class="hotkey-pill">A</span></button>
+          <button class="btn-lbl btn-lbl-D" id="btnTagD">DEAD <span class="hotkey-pill">D</span></button>
+          <button class="btn-lbl btn-lbl-clear" id="btnTagClear">Clear Label <span class="hotkey-pill">X / Del</span></button>
+        </div>
+      </div>
+
+      <!-- Range / Spell Labeling (Speed Mode) -->
+      <div class="card">
+        <div class="card-title">
+          <span>Range / Spell Labeler</span>
+          <span style="font-size: 0.68rem; color: #60a5fa;">10x Workflow</span>
+        </div>
+        <div class="range-box">
+          <div class="range-inputs">
+            <span>In: <b id="rangeInText">--</b> <span class="hotkey-pill">I</span></span>
+            <span>Out: <b id="rangeOutText">--</b> <span class="hotkey-pill">O</span></span>
+          </div>
+          <div style="font-size: 0.7rem; color: #9ca3af;" id="rangeDurationText">No active range marked</div>
+          <div style="display: flex; gap: 5px; margin-top: 2px;">
+            <button class="btn btn-primary" style="flex: 1; padding: 4px; font-size: 0.72rem;" id="btnApplyRange">
+              Apply to Range
+            </button>
+            <button class="btn" style="padding: 4px 7px;" id="btnClearRange" title="Clear In/Out">
+              ✕
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Physics Telemetry -->
+      <div class="card">
+        <div class="card-title">Spatial & Ball Kinematics</div>
+        
+        <div class="stat-row">
+          <span class="stat-label">Ball Speed:</span>
+          <span class="stat-value" id="valBallSpeed">-- m/s</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Nearest Home (BAR):</span>
+          <span class="stat-value" style="color: #60a5fa;" id="valNearestH">--</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Nearest Away (ATH):</span>
+          <span class="stat-value" style="color: #f87171;" id="valNearestA">--</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Proximity Margin:</span>
+          <span class="stat-value" id="valMargin">-- m</span>
+        </div>
+        <div class="margin-bar-container">
+          <div class="margin-bar-fill" id="marginBar"></div>
+        </div>
+
+        <div style="margin-top: 6px;" class="stat-row">
+          <span class="stat-label">Team Speeds (H / A):</span>
+          <span class="stat-value" id="valTeamSpeeds">-- / -- m/s</span>
+        </div>
+      </div>
+
+      <!-- AI Assistant Suggestion -->
+      <div class="card">
+        <div class="card-title">AI Pre-Annotation Assist</div>
+        <div class="ai-box">
+          <div>
+            <div class="ai-pred" id="aiPredLabel">HOME (H)</div>
+            <div class="ai-conf" id="aiPredConf">Confidence: 85%</div>
+          </div>
+          <button class="btn btn-primary" style="padding: 4px 7px; font-size: 0.7rem;" id="btnAcceptAI">
+            Accept <span class="hotkey-pill">Enter</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Session Statistics -->
+      <div class="card">
+        <div class="card-title">Session Progress</div>
+        <div class="stat-row">
+          <span class="stat-label">Labeled Frames:</span>
+          <span class="stat-value" id="statTotalLabeled">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Class Ratio:</span>
+          <span class="stat-value" id="statClassRatio">0% / 0% / 0%</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Spells Count:</span>
+          <span class="stat-value" id="statSpellCount">0</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Bottom Timeline & Scrubber -->
+  <div class="timeline-bar">
+    <div class="timeline-header">
+      <div class="playback-controls">
+        <button class="btn" id="btnStepBack1s" title="Step back 1 second (Shift + Left)">⏪ -1s</button>
+        <button class="btn" id="btnStepBack" title="Step back 1 frame (Left Arrow)">◀</button>
+        <button class="btn btn-primary" id="btnPlayPause" style="min-width: 75px;" title="Play / Pause (Space)">▶ Play</button>
+        <button class="btn" id="btnStepFwd" title="Step forward 1 frame (Right Arrow)">▶</button>
+        <button class="btn" id="btnStepFwd1s" title="Step forward 1 second (Shift + Right)">+1s ⏩</button>
+        
+        <select id="selectSpeed" style="background: #1e293b; color: white; border: 1px solid #334155; padding: 3px 5px; border-radius: 5px; font-size: 0.72rem; margin-left: 4px;">
+          <option value="0.25">0.25x</option>
+          <option value="0.5">0.5x</option>
+          <option value="1.0" selected>1.0x (Real-time)</option>
+          <option value="2.0">2.0x</option>
+        </select>
+      </div>
+
+      <div class="clock-display">
+        <span id="txtClock">00:00.00</span>
+        <span style="font-size: 0.78rem; color: #9ca3af; margin-left: 8px;" id="txtFrameCounter">Frame: 11,185 / 199,319</span>
+      </div>
+
+      <!-- Quick Jump & Zoom Controls -->
+      <div style="display: flex; align-items: center; gap: 4px; font-size: 0.75rem; color: #9ca3af;">
+        <span>Go to:</span>
+        <input type="number" id="inputJumpFrame" placeholder="Frame..." style="width: 70px; background: #1e293b; color: white; border: 1px solid #334155; padding: 2px 4px; border-radius: 4px; font-size: 0.75rem;">
+        <button class="btn" id="btnJump" style="padding: 2px 5px; font-size: 0.7rem;">Go</button>
+        <button class="btn" id="btnJump1stKO" style="padding: 2px 5px; font-size: 0.7rem; background: #1e3a8a;" title="Jump to 1st Half Kickoff (11,185 / Video 4:45)">Kickoff (4:45)</button>
+        <button class="btn" id="btnJump2ndKO" style="padding: 2px 5px; font-size: 0.7rem;" title="Jump to 2nd Half Kickoff (113,741)">2nd KO</button>
+        <span style="margin-left: 4px;">Zoom:</span>
+        <button class="btn" style="padding: 2px 5px; font-size: 0.7rem;" id="btnZoom15m">15m</button>
+        <button class="btn" style="padding: 2px 5px; font-size: 0.7rem;" id="btnZoom5m">5m</button>
+        <button class="btn" style="padding: 2px 5px; font-size: 0.7rem;" id="btnZoomFull">Full</button>
+        <button class="btn" style="padding: 2px 5px; font-size: 0.7rem; background: #334155;" id="btnHelp" title="Keyboard Shortcuts Cheat Sheet">⌨️ Help</button>
+      </div>
+    </div>
+
+    <!-- Multi-Track Possession Ribbon Canvas -->
+    <div class="ribbon-container" id="ribbonBox">
+      <canvas id="ribbonCanvas" width="1600" height="30"></canvas>
+      <div class="playhead-marker" id="playheadMarker"></div>
+      <div class="selection-range-marker" id="selectionMarker" style="display: none;"></div>
+    </div>
+  </div>
+
+  <script>
+    // State Variables
+    let currentFrame = 11185; // Kickoff in tactical ATD
+    let totalFrames = 199319;
+    let fps = 25;
+    let isPlaying = false;
+    let playbackSpeed = 1.0;
+    let playInterval = null;
+
+    let rangeIn = null;
+    let rangeOut = null;
+
+    let windowStart = 11185;
+    let windowEnd = 11185 + 22500; // default 15 mins
+
+    let frameCache = new Map();
+    let spellsData = [];
+    let ballHistory = [];
+
+    // Video Sync: 4:45 broadcast (285s * 25 = 7125) = frame 11,185 -> offset = 4,060
+    let videoLoaded = false;
+    let videoOffset = 4057;
+    let isSeekingVideo = false;
+
+    // Elements
+    const pitchCanvas = document.getElementById("pitchCanvas");
+    const pitchCtx = pitchCanvas.getContext("2d");
+    const ribbonCanvas = document.getElementById("ribbonCanvas");
+    const ribbonCtx = ribbonCanvas.getContext("2d");
+    const playheadMarker = document.getElementById("playheadMarker");
+    const selectionMarker = document.getElementById("selectionMarker");
+
+    const matchVideo = document.getElementById("matchVideo");
+    const videoDropzone = document.getElementById("videoDropzone");
+    const videoFileInput = document.getElementById("videoFileInput");
+    const videoStatusTag = document.getElementById("videoStatusTag");
+    const inputVideoOffset = document.getElementById("inputVideoOffset");
+    const txtBroadcastTime = document.getElementById("txtBroadcastTime");
+
+    // Init
+    window.addEventListener("DOMContentLoaded", async () => {
+      await fetchConfig();
+      await fetchOverview();
+      setupVideoSync();
+      await loadFrame(currentFrame);
+      setupEventListeners();
+      renderRibbon();
+    });
+
+    async function fetchConfig() {
+      try {
+        const res = await fetch("/api/config");
+        const data = await res.json();
+        totalFrames = data.total_frames;
+        fps = data.fps;
+        currentFrame = data.default_kickoff || 11185;
+        if (data.default_video_offset !== undefined) {
+          videoOffset = data.default_video_offset;
+          inputVideoOffset.value = videoOffset;
+        }
+      } catch (err) {
+        console.error("Config fetch error:", err);
+      }
+    }
+
+    async function fetchOverview() {
+      try {
+        const res = await fetch("/api/labels_overview");
+        const data = await res.json();
+        spellsData = data.spells || [];
+        updateStatsUI(data.stats);
+        renderRibbon();
+      } catch (err) {
+        console.error("Overview error:", err);
+      }
+    }
+
+    // Load Single Frame
+    async function loadFrame(vf, syncVideo = true) {
+      currentFrame = Math.max(0, Math.min(vf, totalFrames - 1));
+      
+      let fd = frameCache.get(currentFrame);
+      if (!fd) {
+        prefetchChunk(currentFrame, 150);
+        try {
+          const res = await fetch(`/api/frame/${currentFrame}`);
+          fd = await res.json();
+          frameCache.set(currentFrame, fd);
+        } catch (err) {
+          console.error("Load frame error:", err);
+          return;
+        }
+      }
+
+      updateUI(fd);
+      drawPitch(fd);
+      updateTimelinePlayhead();
+
+      // Synchronize video currentTime if requested
+      if (syncVideo && videoLoaded && !isSeekingVideo) {
+        const targetSec = Math.max(0, (currentFrame - videoOffset) / fps);
+        if (Math.abs(matchVideo.currentTime - targetSec) > 0.08) {
+          isSeekingVideo = true;
+          matchVideo.currentTime = targetSec;
+          setTimeout(() => { isSeekingVideo = false; }, 50);
+        }
+      }
+
+      updateBroadcastTimeDisplay();
+    }
+
+    function updateBroadcastTimeDisplay() {
+      const vTimeSec = Math.max(0, (currentFrame - videoOffset) / fps);
+      const vm = Math.floor(vTimeSec / 60);
+      const vs = Math.floor(vTimeSec % 60);
+      const vms = Math.floor((vTimeSec - Math.floor(vTimeSec)) * 100);
+      txtBroadcastTime.textContent = `${String(vm).padStart(2, '0')}:${String(vs).padStart(2, '0')}.${String(vms).padStart(2, '0')}`;
+    }
+
+    async function prefetchChunk(start, length) {
+      try {
+        const res = await fetch(`/api/chunk?start=${start}&length=${length}`);
+        const data = await res.json();
+        if (data.frames) {
+          for (let f of data.frames) {
+            frameCache.set(f.video_frame, f);
+          }
+        }
+      } catch (e) {}
+    }
+
+    // UI Updates
+    function updateUI(fd) {
+      if (!fd) return;
+      document.getElementById("txtClock").textContent = fd.timestamp;
+      document.getElementById("txtFrameCounter").textContent = `Frame: ${fd.video_frame.toLocaleString()} / ${totalFrames.toLocaleString()}`;
+
+      // Status Badge
+      const sb = document.getElementById("statusBadge");
+      const lbl = fd.label;
+      sb.className = "status-badge status-" + (lbl || "X");
+      if (lbl === "H") sb.textContent = "HOME (BARCELONA)";
+      else if (lbl === "A") sb.textContent = "AWAY (ATHLETIC)";
+      else if (lbl === "D") sb.textContent = "DEAD BALL (STOPPAGE)";
+      else sb.textContent = "UNLABELED (X)";
+
+      // Telemetry
+      const telem = fd.telemetry;
+      if (fd.ball) {
+        document.getElementById("occludedBanner").style.display = "none";
+        document.getElementById("valBallSpeed").textContent = `${fd.ball.s.toFixed(1)} m/s`;
+      } else {
+        document.getElementById("occludedBanner").style.display = "block";
+        document.getElementById("valBallSpeed").textContent = "Occluded (NaN)";
+      }
+
+      if (telem.nearest_home) {
+        document.getElementById("valNearestH").textContent = `#${telem.nearest_home.slot} (${telem.nearest_home.dist}m)`;
+      } else {
+        document.getElementById("valNearestH").textContent = "--";
+      }
+
+      if (telem.nearest_away) {
+        document.getElementById("valNearestA").textContent = `#${telem.nearest_away.slot} (${telem.nearest_away.dist}m)`;
+      } else {
+        document.getElementById("valNearestA").textContent = "--";
+      }
+
+      document.getElementById("valMargin").textContent = `${telem.margin > 0 ? "+" : ""}${telem.margin} m`;
+
+      // Margin bar
+      const mbar = document.getElementById("marginBar");
+      const clampedMargin = Math.max(-10, Math.min(10, telem.margin));
+      if (clampedMargin >= 0) {
+        mbar.style.left = "50%";
+        mbar.style.width = `${(clampedMargin / 10) * 50}%`;
+        mbar.style.background = "#3b82f6";
+      } else {
+        const w = (Math.abs(clampedMargin) / 10) * 50;
+        mbar.style.left = `${50 - w}%`;
+        mbar.style.width = `${w}%`;
+        mbar.style.background = "#ef4444";
+      }
+
+      document.getElementById("valTeamSpeeds").textContent = `${telem.home_speed} / ${telem.away_speed} m/s`;
+
+      // AI Suggestion
+      if (telem.ai_suggestion) {
+        const ai = telem.ai_suggestion;
+        const nameMap = { "H": "HOME (Barca)", "A": "AWAY (Athletic)", "D": "DEAD BALL" };
+        document.getElementById("aiPredLabel").textContent = nameMap[ai.label] || ai.label;
+        document.getElementById("aiPredConf").textContent = `Confidence: ${(ai.confidence * 100).toFixed(0)}%`;
+      }
+
+      updateRangeUI();
+    }
+
+    function updateRangeUI() {
+      const inEl = document.getElementById("rangeInText");
+      const outEl = document.getElementById("rangeOutText");
+      const durEl = document.getElementById("rangeDurationText");
+
+      if (rangeIn !== null) inEl.textContent = rangeIn.toLocaleString();
+      else inEl.textContent = "--";
+
+      if (rangeOut !== null) outEl.textContent = rangeOut.toLocaleString();
+      else outEl.textContent = "--";
+
+      if (rangeIn !== null && rangeOut !== null) {
+        const span = Math.abs(rangeOut - rangeIn) + 1;
+        const sec = (span / fps).toFixed(2);
+        durEl.textContent = `Selection: ${span} frames (${sec}s)`;
+      } else {
+        durEl.textContent = "No active range marked";
+      }
+
+      updateSelectionMarker();
+    }
+
+    function updateStatsUI(stats) {
+      if (!stats) return;
+      document.getElementById("statTotalLabeled").textContent = `${stats.total.toLocaleString()} frames`;
+      if (stats.total > 0) {
+        const ph = ((stats.H / stats.total) * 100).toFixed(0);
+        const pa = ((stats.A / stats.total) * 100).toFixed(0);
+        const pd = ((stats.D / stats.total) * 100).toFixed(0);
+        document.getElementById("statClassRatio").textContent = `H: ${ph}% | A: ${pa}% | D: ${pd}%`;
+      }
+      document.getElementById("statSpellCount").textContent = `${stats.spells_count} spells`;
+    }
+
+    // DRAW TACTICAL PITCH RADAR
+    function drawPitch(fd) {
+      const w = pitchCanvas.width;
+      const h = pitchCanvas.height;
+
+      pitchCtx.fillStyle = "#164528";
+      pitchCtx.fillRect(0, 0, w, h);
+
+      // Grass stripes
+      pitchCtx.fillStyle = "rgba(255, 255, 255, 0.03)";
+      const nStripes = 10;
+      const stripeW = w / nStripes;
+      for (let i = 0; i < nStripes; i += 2) {
+        pitchCtx.fillRect(i * stripeW, 0, stripeW, h);
+      }
+
+      const margin = 20;
+      const pw = w - 2 * margin;
+      const ph = h - 2 * margin;
+
+      pitchCtx.strokeStyle = "rgba(255, 255, 255, 0.75)";
+      pitchCtx.lineWidth = 2.5;
+
+      pitchCtx.strokeRect(margin, margin, pw, ph);
+
+      // Halfway line
+      pitchCtx.beginPath();
+      pitchCtx.moveTo(margin + pw / 2, margin);
+      pitchCtx.lineTo(margin + pw / 2, margin + ph);
+      pitchCtx.stroke();
+
+      // Center circle
+      const centerR = (9.15 / 105.3) * pw;
+      pitchCtx.beginPath();
+      pitchCtx.arc(margin + pw / 2, margin + ph / 2, centerR, 0, Math.PI * 2);
+      pitchCtx.stroke();
+
+      // Center spot
+      pitchCtx.fillStyle = "white";
+      pitchCtx.beginPath();
+      pitchCtx.arc(margin + pw / 2, margin + ph / 2, 3.5, 0, Math.PI * 2);
+      pitchCtx.fill();
+
+      // Penalty Areas
+      const penDepth = (16.5 / 105.3) * pw;
+      const penWidth = (40.32 / 68.0) * ph;
+      const penTop = margin + (ph - penWidth) / 2;
+      pitchCtx.strokeRect(margin, penTop, penDepth, penWidth);
+      pitchCtx.strokeRect(margin + pw - penDepth, penTop, penDepth, penWidth);
+
+      // Goal Areas
+      const gDepth = (5.5 / 105.3) * pw;
+      const gWidth = (18.32 / 68.0) * ph;
+      const gTop = margin + (ph - gWidth) / 2;
+      pitchCtx.strokeRect(margin, gTop, gDepth, gWidth);
+      pitchCtx.strokeRect(margin + pw - gDepth, gTop, gDepth, gWidth);
+
+      const toX = (nx) => margin + nx * pw;
+      const toY = (ny) => margin + ny * ph;
+
+      if (!fd) return;
+
+      // Centroids
+      const telem = fd.telemetry;
+      if (telem) {
+        pitchCtx.strokeStyle = "rgba(59, 130, 246, 0.45)";
+        pitchCtx.setLineDash([4, 4]);
+        pitchCtx.strokeRect(toX(telem.home_centroid.x) - 15, toY(telem.home_centroid.y) - 15, 30, 30);
+        pitchCtx.strokeStyle = "rgba(239, 68, 68, 0.45)";
+        pitchCtx.strokeRect(toX(telem.away_centroid.x) - 15, toY(telem.away_centroid.y) - 15, 30, 30);
+        pitchCtx.setLineDash([]);
+      }
+
+      // Ball & Proximity Lines
+      if (fd.ball) {
+        const bx = toX(fd.ball.x);
+        const by = toY(fd.ball.y);
+
+        ballHistory.push({ x: bx, y: by });
+        if (ballHistory.length > 12) ballHistory.shift();
+
+        for (let i = 0; i < ballHistory.length - 1; i++) {
+          const alpha = (i + 1) / ballHistory.length * 0.4;
+          pitchCtx.strokeStyle = `rgba(251, 191, 36, ${alpha})`;
+          pitchCtx.lineWidth = 2;
+          pitchCtx.beginPath();
+          pitchCtx.moveTo(ballHistory[i].x, ballHistory[i].y);
+          pitchCtx.lineTo(ballHistory[i+1].x, ballHistory[i+1].y);
+          pitchCtx.stroke();
+        }
+
+        if (telem.nearest_home) {
+          const nh = fd.players.find(p => p.slot === telem.nearest_home.slot);
+          if (nh) {
+            pitchCtx.strokeStyle = "rgba(96, 165, 250, 0.8)";
+            pitchCtx.setLineDash([3, 3]);
+            pitchCtx.lineWidth = 1.8;
+            pitchCtx.beginPath();
+            pitchCtx.moveTo(bx, by);
+            pitchCtx.lineTo(toX(nh.x), toY(nh.y));
+            pitchCtx.stroke();
+          }
+        }
+        if (telem.nearest_away) {
+          const na = fd.players.find(p => p.slot === telem.nearest_away.slot);
+          if (na) {
+            pitchCtx.strokeStyle = "rgba(248, 113, 113, 0.8)";
+            pitchCtx.setLineDash([3, 3]);
+            pitchCtx.lineWidth = 1.8;
+            pitchCtx.beginPath();
+            pitchCtx.moveTo(bx, by);
+            pitchCtx.lineTo(toX(na.x), toY(na.y));
+            pitchCtx.stroke();
+          }
+        }
+        pitchCtx.setLineDash([]);
+      }
+
+      // Draw Players
+      const pRadius = 11;
+      for (let p of fd.players) {
+        const px = toX(p.x);
+        const py = toY(p.y);
+
+        pitchCtx.save();
+        pitchCtx.beginPath();
+        pitchCtx.arc(px, py, pRadius, 0, Math.PI * 2);
+
+        if (p.team === "H") {
+          pitchCtx.fillStyle = "#004d98";
+          pitchCtx.fill();
+          pitchCtx.lineWidth = 2.2;
+          pitchCtx.strokeStyle = "#edbb00";
+          pitchCtx.stroke();
+        } else {
+          pitchCtx.fillStyle = "#ee2524";
+          pitchCtx.fill();
+          pitchCtx.lineWidth = 2.2;
+          pitchCtx.strokeStyle = "#ffffff";
+          pitchCtx.stroke();
+        }
+
+        pitchCtx.fillStyle = "white";
+        pitchCtx.font = "bold 9px sans-serif";
+        pitchCtx.textAlign = "center";
+        pitchCtx.textBaseline = "middle";
+        pitchCtx.fillText(p.slot, px, py);
+
+        if (p.s > 0.5) {
+          const arrowLen = Math.min(28, p.s * 4);
+          pitchCtx.strokeStyle = p.team === "H" ? "#60a5fa" : "#fca5a5";
+          pitchCtx.lineWidth = 1.5;
+          pitchCtx.beginPath();
+          pitchCtx.moveTo(px, py);
+          pitchCtx.lineTo(px + (arrowLen * (p.team === "H" ? 0.7 : -0.7)), py);
+          pitchCtx.stroke();
+        }
+
+        pitchCtx.restore();
+      }
+
+      // Draw Ball
+      if (fd.ball) {
+        const bx = toX(fd.ball.x);
+        const by = toY(fd.ball.y);
+
+        pitchCtx.beginPath();
+        pitchCtx.arc(bx, by, 10, 0, Math.PI * 2);
+        pitchCtx.fillStyle = "rgba(251, 191, 36, 0.35)";
+        pitchCtx.fill();
+
+        pitchCtx.beginPath();
+        pitchCtx.arc(bx, by, 5.5, 0, Math.PI * 2);
+        pitchCtx.fillStyle = "#fbbf24";
+        pitchCtx.fill();
+        pitchCtx.strokeStyle = "#ffffff";
+        pitchCtx.lineWidth = 1.5;
+        pitchCtx.stroke();
+      }
+    }
+
+    // MULTI-TRACK TIMELINE RIBBON
+    function renderRibbon() {
+      const rw = ribbonCanvas.width;
+      const rh = ribbonCanvas.height;
+
+      ribbonCtx.fillStyle = "#141c26";
+      ribbonCtx.fillRect(0, 0, rw, rh);
+
+      const span = windowEnd - windowStart;
+      if (span <= 0) return;
+
+      for (let sp of spellsData) {
+        if (sp.end < windowStart || sp.start > windowEnd) continue;
+
+        const x1 = Math.max(0, (sp.start - windowStart) / span * rw);
+        const x2 = Math.min(rw, (sp.end - windowStart) / span * rw);
+        const width = Math.max(1, x2 - x1);
+
+        if (sp.label === "H") ribbonCtx.fillStyle = "#2563eb";
+        else if (sp.label === "A") ribbonCtx.fillStyle = "#dc2626";
+        else if (sp.label === "D") ribbonCtx.fillStyle = "#d97706";
+        else ribbonCtx.fillStyle = "#4b5563";
+
+        ribbonCtx.fillRect(x1, 2, width, rh - 4);
+      }
+    }
+
+    function updateTimelinePlayhead() {
+      const span = windowEnd - windowStart;
+      const pct = Math.max(0, Math.min(1, (currentFrame - windowStart) / span));
+      playheadMarker.style.left = `${pct * 100}%`;
+    }
+
+    function updateSelectionMarker() {
+      if (rangeIn === null || rangeOut === null) {
+        selectionMarker.style.display = "none";
+        return;
+      }
+      const span = windowEnd - windowStart;
+      const startF = Math.min(rangeIn, rangeOut);
+      const endF = Math.max(rangeIn, rangeOut);
+
+      const p1 = Math.max(0, Math.min(1, (startF - windowStart) / span));
+      const p2 = Math.max(0, Math.min(1, (endF - windowStart) / span));
+
+      selectionMarker.style.display = "block";
+      selectionMarker.style.left = `${p1 * 100}%`;
+      selectionMarker.style.width = `${(p2 - p1) * 100}%`;
+    }
+
+    // VIDEO SYNC LOGIC
+    function setupVideoSync() {
+      // Auto-load video
+      matchVideo.addEventListener("loadedmetadata", () => {
+        videoLoaded = true;
+        videoDropzone.style.display = "none";
+        videoStatusTag.textContent = "🟢 BAR-ATH_broadcast.mp4 (Sync: 4:45 Kickoff)";
+        // Set initial video position aligned to current frame
+        const targetSec = Math.max(0, (currentFrame - videoOffset) / fps);
+        matchVideo.currentTime = targetSec;
+        updateBroadcastTimeDisplay();
+      });
+
+      matchVideo.addEventListener("error", (e) => {
+        console.warn("Server video auto-load failed, showing dropzone.", e);
+        videoLoaded = false;
+        videoDropzone.style.display = "flex";
+        videoStatusTag.textContent = "⚠️ Video Not Loaded (Click to Browse)";
+      });
+
+      // Drag and drop video
+      videoDropzone.addEventListener("click", () => videoFileInput.click());
+      document.getElementById("btnSelectVideo").addEventListener("click", () => videoFileInput.click());
+
+      videoFileInput.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (file) loadLocalVideoFile(file);
+      });
+
+      videoDropzone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        videoDropzone.style.borderColor = "#60a5fa";
+      });
+      videoDropzone.addEventListener("dragleave", () => {
+        videoDropzone.style.borderColor = "#374151";
+      });
+      videoDropzone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files[0];
+        if (file) loadLocalVideoFile(file);
+      });
+
+      function loadLocalVideoFile(file) {
+        const url = URL.createObjectURL(file);
+        matchVideo.src = url;
+        videoLoaded = true;
+        videoDropzone.style.display = "none";
+        videoStatusTag.textContent = `🟢 Local: ${file.name.slice(0, 25)}`;
+        matchVideo.currentTime = Math.max(0, (currentFrame - videoOffset) / fps);
+      }
+
+      // Synchronize tactical frame during video playback
+      matchVideo.addEventListener("timeupdate", () => {
+        if (isPlaying && videoLoaded) {
+          const vf = Math.round(matchVideo.currentTime * fps) + videoOffset;
+          if (vf !== currentFrame) {
+            loadFrame(vf, false);
+          }
+        }
+      });
+
+      // Offset Controls
+      function nudgeOffset(delta) {
+        videoOffset += delta;
+        inputVideoOffset.value = videoOffset;
+        if (videoLoaded) {
+          matchVideo.currentTime = Math.max(0, (currentFrame - videoOffset) / fps);
+          updateBroadcastTimeDisplay();
+        }
+      }
+
+      inputVideoOffset.addEventListener("change", (e) => {
+        videoOffset = parseInt(e.target.value) || 0;
+        if (videoLoaded) {
+          matchVideo.currentTime = Math.max(0, (currentFrame - videoOffset) / fps);
+          updateBroadcastTimeDisplay();
+        }
+      });
+
+      document.getElementById("btnOffsetMinus10").addEventListener("click", () => nudgeOffset(-10));
+      document.getElementById("btnOffsetMinus").addEventListener("click", () => nudgeOffset(-1));
+      document.getElementById("btnOffsetPlus").addEventListener("click", () => nudgeOffset(1));
+      document.getElementById("btnOffsetPlus10").addEventListener("click", () => nudgeOffset(10));
+
+      document.getElementById("btnAlignKickoff").addEventListener("click", () => {
+        const vTime = matchVideo.currentTime;
+        videoOffset = 11185 - Math.round(vTime * fps);
+        inputVideoOffset.value = videoOffset;
+        alert(`Kickoff Synchronized! Offset calibrated to ${videoOffset} frames.`);
+        loadFrame(11185);
+      });
+    }
+
+    // LABELING ACTIONS
+    async function tagCurrent(label) {
+      if (rangeIn !== null && rangeOut !== null) {
+        await tagRange(rangeIn, rangeOut, label);
+      } else {
+        try {
+          const res = await fetch("/api/label", {
+            method: "POST",
+            body: JSON.stringify({ frame: currentFrame, label: label })
+          });
+          const fd = frameCache.get(currentFrame);
+          if (fd) fd.label = label;
+          updateUI(fd);
+          fetchOverview();
+        } catch (e) {}
+      }
+    }
+
+    async function tagRange(start, end, label) {
+      try {
+        const res = await fetch("/api/label_range", {
+          method: "POST",
+          body: JSON.stringify({ start, end, label })
+        });
+        frameCache.clear();
+        await loadFrame(currentFrame);
+        await fetchOverview();
+      } catch (e) {}
+    }
+
+    // High-performance 60fps video-radar sync loop
+    function syncVideoFrameLoop() {
+      if (isPlaying && videoLoaded) {
+        const vf = Math.round(matchVideo.currentTime * fps) + videoOffset;
+        if (vf !== currentFrame && vf >= 0 && vf < totalFrames) {
+          loadFrame(vf, false);
+        }
+        requestAnimationFrame(syncVideoFrameLoop);
+      }
+    }
+
+    // PLAYBACK LOOP
+    function togglePlay() {
+      isPlaying = !isPlaying;
+      const btn = document.getElementById("btnPlayPause");
+      if (isPlaying) {
+        btn.textContent = "⏸ Pause";
+        btn.className = "btn btn-primary";
+        if (videoLoaded) {
+          matchVideo.playbackRate = playbackSpeed;
+          matchVideo.play().catch(e => console.log("Play error:", e));
+          requestAnimationFrame(syncVideoFrameLoop);
+        } else {
+          const intervalMs = 1000 / (fps * playbackSpeed);
+          playInterval = setInterval(() => {
+            if (currentFrame >= totalFrames - 1) {
+              togglePlay();
+              return;
+            }
+            loadFrame(currentFrame + 1);
+          }, intervalMs);
+        }
+      } else {
+        btn.textContent = "▶ Play";
+        if (videoLoaded) matchVideo.pause();
+        clearInterval(playInterval);
+      }
+    }
+
+    // EVENT LISTENERS & HOTKEYS
+    function setupEventListeners() {
+      // Playback buttons
+      document.getElementById("btnPlayPause").addEventListener("click", togglePlay);
+      document.getElementById("btnStepBack").addEventListener("click", () => loadFrame(currentFrame - 1));
+      document.getElementById("btnStepFwd").addEventListener("click", () => loadFrame(currentFrame + 1));
+      document.getElementById("btnStepBack1s").addEventListener("click", () => loadFrame(currentFrame - fps));
+      document.getElementById("btnStepFwd1s").addEventListener("click", () => loadFrame(currentFrame + fps));
+
+      document.getElementById("selectSpeed").addEventListener("change", (e) => {
+        playbackSpeed = parseFloat(e.target.value);
+        if (videoLoaded) matchVideo.playbackRate = playbackSpeed;
+        if (isPlaying && !videoLoaded) { togglePlay(); togglePlay(); }
+      });
+
+      // Tags
+      document.getElementById("btnTagH").addEventListener("click", () => tagCurrent("H"));
+      document.getElementById("btnTagA").addEventListener("click", () => tagCurrent("A"));
+      document.getElementById("btnTagD").addEventListener("click", () => tagCurrent("D"));
+      document.getElementById("btnTagClear").addEventListener("click", () => tagCurrent(null));
+
+      // Range
+      document.getElementById("btnClearRange").addEventListener("click", () => {
+        rangeIn = null;
+        rangeOut = null;
+        updateRangeUI();
+      });
+
+      document.getElementById("btnApplyRange").addEventListener("click", () => {
+        const activeLbl = frameCache.get(currentFrame)?.label || "H";
+        if (rangeIn !== null && rangeOut !== null) {
+          tagRange(rangeIn, rangeOut, activeLbl);
+        }
+      });
+
+      document.getElementById("btnAcceptAI").addEventListener("click", () => {
+        const fd = frameCache.get(currentFrame);
+        if (fd && fd.telemetry && fd.telemetry.ai_suggestion) {
+          tagCurrent(fd.telemetry.ai_suggestion.label);
+        }
+      });
+
+      // Header tools
+      document.getElementById("btnLoadGT").addEventListener("click", async () => {
+        if (confirm("Load official 5-minute competition ground truth into session?")) {
+          const res = await fetch("/api/load_reference_gt", { method: "POST" });
+          const data = await res.json();
+          alert(`Successfully imported ${data.loaded_count} reference frames!`);
+          frameCache.clear();
+          loadFrame(currentFrame);
+          fetchOverview();
+        }
+      });
+
+      document.getElementById("btnAutoAI").addEventListener("click", async () => {
+        if (rangeIn === null || rangeOut === null) {
+          alert("Please mark an In (I) and Out (O) range first!");
+          return;
+        }
+        const res = await fetch("/api/ai_fill_range", {
+          method: "POST",
+          body: JSON.stringify({ start: rangeIn, end: rangeOut })
+        });
+        const d = await res.json();
+        alert(`AI Heuristic labeled ${d.filled_count} frames!`);
+        frameCache.clear();
+        loadFrame(currentFrame);
+        fetchOverview();
+      });
+
+      document.getElementById("btnExportCSV").addEventListener("click", async () => {
+        const res = await fetch("/api/export_csv", { method: "POST" });
+        const d = await res.json();
+        alert(`Saved ${d.labeled_count} labels to ${d.export_path}`);
+      });
+
+      document.getElementById("btnExportTrain").addEventListener("click", async () => {
+        const res = await fetch("/api/export_training_set", { method: "POST" });
+        const d = await res.json();
+        if (d.error) alert(d.error);
+        else alert(`Exported ${d.labeled_count} rows! Merged features: ${d.merged_features_count}`);
+      });
+
+      // Jump controls
+      const jumpInput = document.getElementById("inputJumpFrame");
+      const doJump = () => {
+        const val = parseInt(jumpInput.value);
+        if (!isNaN(val)) loadFrame(val);
+      };
+      document.getElementById("btnJump").addEventListener("click", doJump);
+      jumpInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") doJump();
+      });
+
+      document.getElementById("btnJump1stKO").addEventListener("click", () => {
+        windowStart = 11185;
+        windowEnd = 11185 + 22500;
+        loadFrame(11185);
+        renderRibbon();
+      });
+
+      document.getElementById("btnJump2ndKO").addEventListener("click", () => {
+        windowStart = 113741;
+        windowEnd = Math.min(totalFrames, 113741 + 22500);
+        loadFrame(113741);
+        renderRibbon();
+      });
+
+      document.getElementById("btnHelp").addEventListener("click", () => {
+        alert(
+          "🎮 Barca Vision Labeler -- Keyboard Shortcuts Cheat Sheet:\n\n" +
+          "• Spacebar: Play / Pause (synchronous Video + Tactical Radar)\n" +
+          "• Left / Right Arrow: Step 1 frame backward / forward\n" +
+          "• Shift + Left / Right: Step 1 second (25 frames)\n" +
+          "• Ctrl + Left / Right: Step 5 seconds (125 frames)\n" +
+          "• H: Label active frame / range as HOME (Barcelona)\n" +
+          "• A: Label active frame / range as AWAY (Athletic)\n" +
+          "• D: Label active frame / range as DEAD BALL (Stoppage)\n" +
+          "• X / Delete: Clear label for active frame / range\n" +
+          "• I or [: Mark In-point for range selection\n" +
+          "• O or ]: Mark Out-point for range selection\n" +
+          "• R: Reset / clear In-Out selection\n" +
+          "• Enter: Accept AI Pre-Annotation suggestion\n\n" +
+          "⚡ Kickoff Sync: Broadcast 04:45 corresponds to Tactical Frame 11,185 (Offset: 4,060)."
+        );
+      });
+
+      // Zoom buttons
+      document.getElementById("btnZoom15m").addEventListener("click", () => {
+        windowStart = 11185;
+        windowEnd = 11185 + 22500;
+        renderRibbon();
+        updateTimelinePlayhead();
+        updateSelectionMarker();
+      });
+      document.getElementById("btnZoom5m").addEventListener("click", () => {
+        windowStart = 11185;
+        windowEnd = 11185 + 7500;
+        renderRibbon();
+        updateTimelinePlayhead();
+        updateSelectionMarker();
+      });
+      document.getElementById("btnZoomFull").addEventListener("click", () => {
+        windowStart = 0;
+        windowEnd = totalFrames;
+        renderRibbon();
+        updateTimelinePlayhead();
+        updateSelectionMarker();
+      });
+
+      // Scrubber Clicking
+      const ribbonBox = document.getElementById("ribbonBox");
+      ribbonBox.addEventListener("click", (e) => {
+        const rect = ribbonBox.getBoundingClientRect();
+        const pct = (e.clientX - rect.left) / rect.width;
+        const targetFrame = Math.round(windowStart + pct * (windowEnd - windowStart));
+        loadFrame(targetFrame);
+      });
+
+      // Keyboard Shortcuts
+      window.addEventListener("keydown", (e) => {
+        if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+
+        // Video Offset Nudge Shortcuts: Alt + Left/Right Arrow
+        if (e.altKey && e.code === "ArrowLeft") {
+          e.preventDefault();
+          nudgeOffset(e.shiftKey ? -10 : -1);
+          return;
+        } else if (e.altKey && e.code === "ArrowRight") {
+          e.preventDefault();
+          nudgeOffset(e.shiftKey ? 10 : 1);
+          return;
+        }
+
+        if (e.code === "Space") {
+          e.preventDefault();
+          togglePlay();
+        } else if (e.code === "ArrowLeft") {
+          e.preventDefault();
+          if (e.shiftKey) loadFrame(currentFrame - fps);
+          else if (e.ctrlKey) loadFrame(currentFrame - fps * 5);
+          else loadFrame(currentFrame - 1);
+        } else if (e.code === "ArrowRight") {
+          e.preventDefault();
+          if (e.shiftKey) loadFrame(currentFrame + fps);
+          else if (e.ctrlKey) loadFrame(currentFrame + fps * 5);
+          else loadFrame(currentFrame + 1);
+        } else if (e.key === "h" || e.key === "H") {
+          tagCurrent("H");
+        } else if (e.key === "a" || e.key === "A") {
+          tagCurrent("A");
+        } else if (e.key === "d" || e.key === "D") {
+          tagCurrent("D");
+        } else if (e.key === "x" || e.key === "X" || e.code === "Delete") {
+          tagCurrent(null);
+        } else if (e.key === "i" || e.key === "I" || e.key === "[") {
+          rangeIn = currentFrame;
+          updateRangeUI();
+        } else if (e.key === "o" || e.key === "O" || e.key === "]") {
+          rangeOut = currentFrame;
+          updateRangeUI();
+        } else if (e.key === "r" || e.key === "R") {
+          rangeIn = null;
+          rangeOut = null;
+          updateRangeUI();
+        } else if (e.code === "Enter") {
+          const fd = frameCache.get(currentFrame);
+          if (fd && fd.telemetry && fd.telemetry.ai_suggestion) {
+            tagCurrent(fd.telemetry.ai_suggestion.label);
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
