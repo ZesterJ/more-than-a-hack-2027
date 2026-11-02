@@ -1,4 +1,4 @@
-"""Launcher for Barca Vision Labeler.
+"""Launcher for Barca Vision Analyzer.
 
 Initializes the index, finds an available port (default 5000), starts the local
 Flask server, and opens the default web browser automatically.
@@ -40,19 +40,19 @@ def is_labeler_already_running(port: int = 5000) -> bool:
 def open_browser(port: int):
     time.sleep(1.2)
     url = f"http://127.0.0.1:{port}"
-    print(f"[Labeler] Opening browser at {url} ...")
+    print(f"[Analyzer] Opening browser at {url} ...")
     webbrowser.open(url)
 
 
 def main():
     print("=" * 60)
-    print("  BARCA VISION LABELER -- TACTICAL ANNOTATION STUDIO")
+    print("  BARCA VISION ANALYZER -- POSSESSION MODEL DEBUGGER")
     print("=" * 60)
 
     # Check if already running on port 5000
     if is_labeler_already_running(5000):
-        print("[Labeler] Barca Vision Labeler is ALREADY running on http://127.0.0.1:5000")
-        print("[Labeler] Re-opening web browser tab...")
+        print("[Analyzer] Barca Vision Analyzer is ALREADY running on http://127.0.0.1:5000")
+        print("[Analyzer] Re-opening web browser tab...")
         webbrowser.open("http://127.0.0.1:5000")
         print("Ready! You can switch to your open browser window.")
         return
@@ -60,7 +60,7 @@ def main():
     # Find free port starting at 5000
     port = 5000
     while is_port_in_use(port) and port < 5010:
-        print(f"[Labeler] Port {port} is occupied, trying port {port + 1}...")
+        print(f"[Analyzer] Port {port} is occupied, trying port {port + 1}...")
         port += 1
 
     print("Building high-performance frame index...")
