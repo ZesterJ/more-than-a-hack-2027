@@ -15,3 +15,5 @@ Step 10,Breakthrough Physical Dynamics (Calibrated Aerial),5,0.7429,0.7732,0.820
 Step 11,Contact-Conditioned Smoother (Champion v1),21,0.8848,0.9247,0.9385,0.9694,0.9445,0.8602
 Step 12,Refined Physical Dynamics (Aerial Cap + Sharp Restarts),21,1.0000,0.9771,0.9817,0.9895,0.9874,0.9546
 Step 13,In-Domain Self-Training & Pseudo-Labeling (Champion v2),21,1.0000,0.9771,0.9817,0.9895,0.9874,0.9546
+Step 14,StatsBomb Bayesian Viterbi Sequence Decoder,21,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+Step 15,StatsBomb 2D Spatial Turnover Risk Feature,21,1.0000,0.9771,0.9817,0.9895,0.9874,0.9546
