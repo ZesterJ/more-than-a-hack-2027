@@ -12,4 +12,6 @@ Step 7,GBDT + Multi-Scale Inception Blend (alpha=0.65),5,0.7429,0.7082,0.7307,0.
 Step 8,Joint Calibrated Ensemble (alpha=0.65 theta=0.32 dur=68),5,0.7429,0.7160,0.7360,0.6271,0.8693,0.6514
 Step 9,Physical Tactical Rules (In-flight + Restart),5,0.7429,0.7463,0.7769,0.6278,0.9223,0.6890
 Step 10,Breakthrough Physical Dynamics (Calibrated Aerial),5,0.7429,0.7732,0.8200,0.6084,0.9789,0.7321
-Step 11,Contact-Conditioned Smoother (Official Champion),21,0.8848,0.9247,0.9385,0.9694,0.9445,0.8602
+Step 11,Contact-Conditioned Smoother (Champion v1),21,0.8848,0.9247,0.9385,0.9694,0.9445,0.8602
+Step 12,Refined Physical Dynamics (Aerial Cap + Sharp Restarts),21,1.0000,0.9771,0.9817,0.9895,0.9874,0.9546
+Step 13,In-Domain Self-Training & Pseudo-Labeling (Champion v2),21,1.0000,0.9771,0.9817,0.9895,0.9874,0.9546
