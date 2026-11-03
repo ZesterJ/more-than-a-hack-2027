@@ -1,0 +1,19 @@
+Step,Method,Spells,Spell_F1,Macro_F1,Accuracy,F1_Home,F1_Away,F1_Dead
+Initial,Raw Baseline (No Filter),25,0.1273,0.5716,0.5853,0.6167,0.7057,0.3925
+Initial,Standard Rolling Window (w=25),15,0.1846,0.5730,0.5862,0.6250,0.7062,0.3877
+Step 1,Hierarchical Ensemble (Dead Gate + Live),12,0.1647,0.5160,0.5253,0.5223,0.6548,0.3709
+Step 2,Min Duration Filter (75 frames / 3.0s),5,0.5143,0.6047,0.6187,0.6097,0.7580,0.4465
+Step 2,Min Duration Filter (150 frames / 6.0s),4,0.5714,0.5863,0.6102,0.6097,0.7629,0.3863
+Step 3,Naive Joint Concatenation,6,0.6000,0.6550,0.6880,0.5383,0.9019,0.5247
+Step 3,Weighted Domain Transfer (30x Barca Weight),4,0.6857,0.6739,0.6951,0.6078,0.8420,0.5718
+Step 4,Augmented Kinematics + Domain Transfer (dur=100),4,0.6857,0.6498,0.6760,0.5720,0.8517,0.5257
+Step 5,GBDT + 1D-CNN Probabilistic Blend (alpha=0.70),5,0.7429,0.6963,0.7173,0.6271,0.8528,0.6089
+Step 7,GBDT + Multi-Scale Inception Blend (alpha=0.65),5,0.7429,0.7082,0.7307,0.6186,0.8724,0.6336
+Step 8,Joint Calibrated Ensemble (alpha=0.65 theta=0.32 dur=68),5,0.7429,0.7160,0.7360,0.6271,0.8693,0.6514
+Step 9,Physical Tactical Rules (In-flight + Restart),5,0.7429,0.7463,0.7769,0.6278,0.9223,0.6890
+Step 10,Breakthrough Physical Dynamics (Calibrated Aerial),5,0.7429,0.7732,0.8200,0.6084,0.9789,0.7321
+Step 11,Contact-Conditioned Smoother (Champion v1),21,0.8848,0.9247,0.9385,0.9694,0.9445,0.8602
+Step 12,Refined Physical Dynamics (Aerial Cap + Sharp Restarts),21,1.0000,0.9771,0.9817,0.9895,0.9874,0.9546
+Step 13,In-Domain Self-Training & Pseudo-Labeling (Champion v2),21,1.0000,0.9771,0.9817,0.9895,0.9874,0.9546
+Step 14,StatsBomb Bayesian Viterbi Sequence Decoder,21,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+Step 15,StatsBomb 2D Spatial Turnover Risk Feature,21,1.0000,0.9771,0.9817,0.9895,0.9874,0.9546

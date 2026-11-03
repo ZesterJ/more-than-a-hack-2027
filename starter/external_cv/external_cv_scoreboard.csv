@@ -1,0 +1,5 @@
+Experiment,OOF Accuracy,OOF Macro F1,H F1 (Home),A F1 (Away),D F1 (Stoppage),Time (s)
+"Exp 4: Multi-Tree Blend (LGBM + XGBoost, colsample=0.75)",82.04,0.8219,0.8139,0.8084,0.8435,120.2
+Exp 3: Upgraded 41 Feats (colsample=0.75),81.96,0.8212,0.813,0.8075,0.8432,66.8
+Exp 2: Upgraded 41 Feats (colsample=0.85),81.87,0.8203,0.8116,0.8061,0.8431,51.0
+Exp 1: Baseline 38 Feats (colsample=0.85),80.75,0.8084,0.808,0.7945,0.8228,40.5
