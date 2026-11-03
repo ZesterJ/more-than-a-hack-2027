@@ -1,0 +1,15 @@
+{
+  "training_frames": 226716,
+  "matches": [
+    "Metrica_1",
+    "Metrica_2",
+    "Metrica_3",
+    "SkillCorner_2841",
+    "SkillCorner_4039"
+  ],
+  "n_features": 41,
+  "architecture": "Multi-Tree Blend (5x LightGBM + 1x XGBoost)",
+  "tuning_method": "Leave-One-Match-Out External Cross-Validation",
+  "competition_frames_in_train": 0,
+  "compliance": "100% External, Strict Nov 3 Rule Clarification"
+}
