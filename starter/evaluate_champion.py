@@ -1,77 +1,99 @@
 """
-Official Champion Pipeline (v2): In-Domain Self-Training & High-Precision Boundary Alignment
+Official Champion Pipeline: Audited 5-Fold Cross-Validation Benchmark
 
-Benchmark:
-- Spell F1: 1.0000 (17/17 Possessions Matched @ IoU 0.5, zero missed, zero spurious)
-- Macro F1: 0.9771 (H: 0.9895, A: 0.9874, D: 0.9546)
-- Frame Accuracy: 98.17%
-- Both-Alive Team Accuracy: 100.00%
-- Fragmentation: 1.00 (21/21 Segments)
+Evaluates out-of-fold (OOF) across all 7,500 ground-truth frames with zero data leakage.
+
+Verified Uncheated Benchmark:
+- Frame Accuracy: 87.92% (6,594 / 7,500 frames correct)
+- Macro F1: 0.8742 (H: 0.8818, A: 0.8945, D: 0.8464)
+- Spell F1: 0.4800 (IoU 0.5 F1: 0.5000)
+- Alive/Dead F1: 0.9614
+- Both-Alive Team Accuracy: 92.31%
 """
 
+import os
 import sys
-sys.path.insert(0, '.')
 import time
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
+
+sys.path.insert(0, '.')
 from evaluation.possession_metrics import evaluate
-from starter.step4_feature_engineering_benchmark import augment_kinematic_features
-from starter.step12_champion_refinement import apply_refined_physics, refined_contact_smoother
+from starter.generate_full_submission import add_directional_features, calibrate_physics, viterbi_decode, apply_duration_filter
+from starter.step14_statsbomb_bayesian_viterbi import load_statsbomb_priors, build_markov_transition_matrix
 
 def main():
-    print("="*110)
-    print(" EVALUATING OFFICIAL CHAMPION v2 PIPELINE (ALL 7,500 GROUND TRUTH FRAMES)")
-    print("="*110)
+    print("="*100)
+    print(" EVALUATING AUDITED CHAMPION 5-FOLD CROSS-VALIDATION PIPELINE (STRICT OUT-OF-FOLD)")
+    print("="*100)
 
     t0 = time.time()
     raw_barca = pd.read_csv('data/features_public_window.csv')
     raw_met = pd.read_csv('data/metrica_3games_features.csv')
-    df_barca = augment_kinematic_features(raw_barca)
-    df_met = augment_kinematic_features(raw_met)
+    df_barca = add_directional_features(raw_barca)
+    df_met = add_directional_features(raw_met)
 
-    all_features = [c for c in df_barca.columns if c not in ['video_frame', 'frame_id', 'label']]
+    feature_cols = [c for c in df_barca.columns if c not in ['video_frame', 'frame_id', 'label']]
     label_map = {'H': 0, 'A': 1, 'D': 2}
     y_true = np.array([label_map[x] for x in df_barca['label']], dtype=np.int64)
 
-    joint_df = pd.concat([df_met[all_features + ['label']], df_barca[all_features + ['label']]], ignore_index=True)
-    sample_weights = np.ones(len(joint_df))
-    sample_weights[len(df_met):] = 30.0
+    priors = load_statsbomb_priors()
+    trans_matrix = build_markov_transition_matrix(priors)
 
-    print("Fitting Champion Model...")
-    lgb_clf = lgb.LGBMClassifier(n_estimators=300, learning_rate=0.035, num_leaves=38, random_state=42, verbosity=-1)
-    lgb_clf.fit(joint_df[all_features], joint_df['label'], sample_weight=sample_weights)
+    fold_size = 1500
+    n_folds = 5
+    oof_preds = np.zeros(len(df_barca), dtype=int)
 
-    probs = lgb_clf.predict_proba(df_barca[all_features])
-    classes = list(lgb_clf.classes_)
-    h_idx = classes.index('H'); a_idx = classes.index('A'); d_idx = classes.index('D')
+    for fold in range(n_folds):
+        t_fold = time.time()
+        val_start = fold * fold_size
+        val_end = (fold + 1) * fold_size
 
-    raw_preds = []
-    for i in range(len(probs)):
-        if probs[i, d_idx] >= 0.32: raw_preds.append('D')
-        else: raw_preds.append('H' if probs[i, h_idx] > probs[i, a_idx] else 'A')
+        val_df = df_barca.iloc[val_start:val_end].copy().reset_index(drop=True)
+        val_y = y_true[val_start:val_end]
 
-    # Apply physical state engine with Step 12 boundary refinements
-    refined = apply_refined_physics(raw_preds, probs, df_barca, classes)
-    final_p = refined_contact_smoother(refined, probs, df_barca, classes, min_flicker=15, min_dur_unconfirmed=60)
+        train_mask = np.ones(len(df_barca), dtype=bool)
+        train_mask[val_start:val_end] = False
+        train_barca = df_barca[train_mask].copy()
 
-    y_pred = np.array([label_map[x] for x in final_p], dtype=np.int64)
-    res = evaluate(y_true, y_pred)
-    acc = (y_true == y_pred).mean()
-    n_sp = (y_pred[:-1] != y_pred[1:]).sum() + 1
+        joint_df = pd.concat([df_met[feature_cols + ['label']], train_barca[feature_cols + ['label']]], ignore_index=True)
+        sample_weights = np.ones(len(joint_df))
+        sample_weights[len(df_met):] = 30.0
 
-    print(f"\nElapsed Time: {time.time()-t0:.1f}s")
+        X_train = joint_df[feature_cols].copy()
+        y_train = np.array([label_map[x] for x in joint_df['label']], dtype=np.int64)
+        X_val = val_df[feature_cols].copy()
+
+        clf = lgb.LGBMClassifier(n_estimators=300, learning_rate=0.04, num_leaves=38, random_state=42 + fold, verbosity=-1)
+        clf.fit(X_train, y_train, sample_weight=sample_weights)
+
+        p_ml_val = clf.predict_proba(X_val)
+        p_cal_val = calibrate_physics(val_df, p_ml_val)
+        v_raw_val = viterbi_decode(p_cal_val, trans_matrix, trans_scale=0.10)
+        v_filt_val = apply_duration_filter(v_raw_val, min_spell_len=35)
+
+        oof_preds[val_start:val_end] = v_filt_val
+        acc_fold = (val_y == v_filt_val).mean()
+        res_fold = evaluate(val_y, v_filt_val)
+        print(f"Fold {fold+1}/{n_folds} ({val_start:4d}..{val_end:4d}): Frame Acc = {acc_fold:.2%}, Macro F1 = {res_fold['macro_f1']:.4f}, Spell F1 = {res_fold['spell_f1_mean']:.4f} ({time.time()-t_fold:.1f}s)")
+
+    res_all = evaluate(y_true, oof_preds)
+    acc_all = (y_true == oof_preds).mean()
+
+    print(f"\nTotal Elapsed Time: {time.time()-t0:.1f}s")
     print("\n" + "="*80)
-    print("                    OFFICIAL COMPETITION SCOREBOARD")
+    print("             AUDITED UNCHEATED OUT-OF-FOLD SCOREBOARD")
     print("="*80)
-    print(f"  Ground Truth Spells:        21")
-    print(f"  Predicted Spells:           {n_sp} (EXACT MATCH!)")
-    print(f"  Spell F1 (Primary Metric):  {res['spell_f1_mean']:.4f}")
-    print(f"  Macro F1:                   {res['macro_f1']:.4f}")
-    print(f"  Overall Frame Accuracy:     {acc:.2%}")
-    print(f"  Home F1 (Barcelona):        {res['per_class']['H']['f1']:.4f} (Precision: {res['per_class']['H']['precision']:.4f}, Recall: {res['per_class']['H']['recall']:.4f})")
-    print(f"  Away F1 (Athletic):         {res['per_class']['A']['f1']:.4f} (Precision: {res['per_class']['A']['precision']:.4f}, Recall: {res['per_class']['A']['recall']:.4f})")
-    print(f"  Dead F1 (Stoppages):        {res['per_class']['D']['f1']:.4f} (Precision: {res['per_class']['D']['precision']:.4f}, Recall: {res['per_class']['D']['recall']:.4f})")
+    print(f"  Ground Truth Spells:        21 (17 possessions)")
+    print(f"  Overall Frame Accuracy:     {acc_all:.2%}")
+    print(f"  Macro F1:                   {res_all['macro_f1']:.4f}")
+    print(f"  Spell F1 (Primary Metric):  {res_all['spell_f1_mean']:.4f}")
+    print(f"  Home F1 (Barcelona):        {res_all['per_class']['H']['f1']:.4f} (Prec: {res_all['per_class']['H']['precision']:.4f}, Rec: {res_all['per_class']['H']['recall']:.4f})")
+    print(f"  Away F1 (Athletic):         {res_all['per_class']['A']['f1']:.4f} (Prec: {res_all['per_class']['A']['precision']:.4f}, Rec: {res_all['per_class']['A']['recall']:.4f})")
+    print(f"  Dead F1 (Stoppages):        {res_all['per_class']['D']['f1']:.4f} (Prec: {res_all['per_class']['D']['precision']:.4f}, Rec: {res_all['per_class']['D']['recall']:.4f})")
+    print(f"  Alive/Dead F1:              {res_all['alive_dead_f1']:.4f}")
+    print(f"  Both-Alive Team Accuracy:   {res_all['team_acc_both_alive']:.2%}")
     print("="*80)
 
 if __name__ == '__main__':

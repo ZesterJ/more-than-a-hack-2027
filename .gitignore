@@ -62,5 +62,7 @@ __pycache__/
 venv/
 env/
 .DS_Store
+scratch/
+catboost_info/
 
 !starter/TACTICAL_ML_BALL_POSSESSION_REPORT.pdf

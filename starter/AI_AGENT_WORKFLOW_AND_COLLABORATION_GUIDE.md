@@ -1,9 +1,9 @@
 # AI Agent Workflow & Teammate Collaboration Guide
 **Project**: More Than A Hack 2027 (FC Barcelona vs Athletic Club)  
 **Author**: Machine Learning Team (@harveycheung2)  
-**Current Champion Benchmark**: **Spell F1 = 1.0000** | **Macro F1 = 1.0000** | **Frame Accuracy = 100.00%**  
-**Possessions**: **17 Predicted vs 17 Ground Truth (Exact 100% Match, 0 missed, 0 spurious)**  
-**Segments**: **21 Predicted vs 21 Ground Truth (Fragmentation = 1.00)**
+**Current Champion Benchmark**: **Macro F1 = 0.8742** | **Frame Accuracy = 87.92%** | **Spell F1 = 0.4800** (Official Board Rank #1)  
+**Integrity Standard**: **100% Out-of-Fold (OOF) Cross-Validation — Zero In-Sample Memorization, Zero Data Leakage**  
+**Class Breakdown**: **Away F1 = 0.8945** | **Home F1 = 0.8818** | **Dead F1 = 0.8464** | **Alive/Dead F1 = 0.9614**
 
 ---
 
@@ -11,22 +11,22 @@
 
 If you or your AI agent (Antigravity, Cursor, Claude, ChatGPT) are continuing work on this repository, run these commands:
 
-### A. Reproduce the Bayesian Viterbi Benchmark (1.0000 Spell F1, 1.0000 Macro F1, 100% Accuracy):
-```bash
-cd repo
-python starter/step14_statsbomb_bayesian_viterbi.py
-```
-
-### B. Reproduce the Production Champion Model (4.6s execution):
+### A. Evaluate the Audited Out-of-Fold Champion Pipeline (87.92% Acc, 0.8742 Macro F1):
 ```bash
 cd repo
 python starter/evaluate_champion.py
 ```
 
-### C. Generate & Validate the Official Full-Match Submission (199,319 rows in 41s):
+### B. Generate & Validate the Official Full-Match Submission (199,319 rows in ~100s):
 ```bash
 cd repo
 python starter/generate_full_submission.py
+```
+
+### C. Run the Official Competition Scoreboard:
+```bash
+cd repo
+python evaluation/run_evaluation.py
 ```
 
 ---

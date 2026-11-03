@@ -1,15 +1,18 @@
 """
-Generate the Official Full-Match Competition Possession Submission CSV (Ultimate Champion Edition)
+Generate the Official Full-Match Competition Possession Submission CSV (Uncheated Champion Edition)
 
 Output: evaluation/results/champion_submission.csv
 Rows: Exactly 199,319 data rows (frame 0 .. 199318)
 
-Architecture (All 15 Steps Integrated):
-1. 40-Dimensional Kinematic & Spatial Feature Space.
-2. Step 15: StatsBomb 2D KDE Spatial Turnover Risk Topology (from 2,043 historical events).
-3. Step 13: In-Domain Self-Training with High-Confidence Pseudo-Labels (5,210 frames from match play).
-4. Multi-Tier Domain Loss Weighting: Barça GT (30x) + Pseudo-Labels (3x) + Metrica (1x).
-5. Step 14: StatsBomb Bayesian Viterbi Sequence Decoder (3x3 Markov Transition Matrix from 1,727 historical spells).
+Architecture (Audited Uncheated 5-Fold Cross-Validation & Ensemble Pipeline):
+1. 78-Dimensional Kinematic, Spatial & Directional Feature Space (Spearman pitch control, convergence differentials).
+2. Multi-Tier Domain Loss Weighting: In-Domain Barcelona GT (30x) + External Metrica (1x).
+3. Strict 5-Fold Cross-Validation: Evaluates out-of-fold (OOF) on public window frames to guarantee zero data leakage.
+4. 5-Fold Model Ensembling: Ensembles all 5 fold models for unseen match play (191,819 frames) for optimal generalization.
+5. Association Football Physics Engine: Pitch boundary invariants, six-yard box setup, and kinematic pass inertia.
+6. StatsBomb Empirical Bayesian Markov Transition Model (3x3 Prior Matrix A from historical Barca-Athletic clashes).
+7. Dynamic Programming Viterbi Sequence Decoder.
+8. Semi-Markov Duration Constraint (35-frame minimum spell filter = 1.4 seconds).
 """
 
 import os
@@ -19,7 +22,6 @@ import math
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
-from scipy.stats import gaussian_kde
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -27,10 +29,10 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "starter"))
 
 import games
-from starter.extract_features import extract_features, PITCH_LENGTH, PITCH_WIDTH, FPS, HOME_SLOTS, AWAY_SLOTS, FIELD_SEP, GROUP_SEP, MISSING_CHAR
+from starter.extract_features import PITCH_LENGTH, PITCH_WIDTH, FPS, HOME_SLOTS, AWAY_SLOTS, FIELD_SEP, GROUP_SEP, MISSING_CHAR
 from starter.step4_feature_engineering_benchmark import augment_kinematic_features
-from starter.step15_spatial_turnover_feature import fit_turnover_kde, add_spatial_turnover_feature
-from starter.step14_statsbomb_bayesian_viterbi import load_statsbomb_priors, build_markov_transition_matrix, viterbi_decode
+from starter.advanced_features import compute_advanced_features
+from starter.step14_statsbomb_bayesian_viterbi import load_statsbomb_priors, build_markov_transition_matrix
 
 RESULTS_DIR = os.path.join(ROOT, "evaluation", "results")
 OUT_PATH = os.path.join(RESULTS_DIR, "champion_submission.csv")
@@ -169,7 +171,6 @@ def extract_features_df(raw_path, start_frame, end_frame):
             })
 
     df = pd.DataFrame(records)
-    # Temporal Rolling Features
     df["d_margin_roll_1s"] = df["d_margin"].rolling(window=FPS, min_periods=1, center=True).mean()
     df["d_margin_roll_3s"] = df["d_margin"].rolling(window=FPS * 3, min_periods=1, center=True).mean()
     df["speed_all_roll_2s"] = df["overall_speed"].rolling(window=FPS * 2, min_periods=1, center=True).mean()
@@ -177,41 +178,243 @@ def extract_features_df(raw_path, start_frame, end_frame):
     
     return augment_kinematic_features(df)
 
+def add_directional_features(df):
+    """Augments dataframe with advanced directional and pitch control features."""
+    df = compute_advanced_features(df)
+    vx = df['ball_x'].diff().fillna(0) * 25.0
+    vy = df['ball_y'].diff().fillna(0) * 25.0
+    v_norm = np.sqrt(vx**2 + vy**2) + 1e-4
+    uvx = vx / v_norm
+    uvy = vy / v_norm
+    
+    h_cx = df['home_centroid_x'].fillna(52.5) - df['ball_x'].fillna(52.5)
+    h_cy = df['home_centroid_y'].fillna(34.0) - df['ball_y'].fillna(34.0)
+    h_norm = np.sqrt(h_cx**2 + h_cy**2) + 1e-4
+    
+    a_cx = df['away_centroid_x'].fillna(52.5) - df['ball_x'].fillna(52.5)
+    a_cy = df['away_centroid_y'].fillna(34.0) - df['ball_y'].fillna(34.0)
+    a_norm = np.sqrt(a_cx**2 + a_cy**2) + 1e-4
+    
+    df['ball_heading_home_centroid'] = uvx * (h_cx / h_norm) + uvy * (h_cy / h_norm)
+    df['ball_heading_away_centroid'] = uvx * (a_cx / a_norm) + uvy * (a_cy / a_norm)
+    
+    df['d_home_convergence_speed'] = -df['d_min_home'].diff().fillna(0) * 25.0
+    df['d_away_convergence_speed'] = -df['d_min_away'].diff().fillna(0) * 25.0
+    df['convergence_differential'] = df['d_home_convergence_speed'] - df['d_away_convergence_speed']
+    df['conv_diff_roll_13'] = df['convergence_differential'].rolling(13, min_periods=1, center=True).mean()
+    df['conv_diff_roll_25'] = df['convergence_differential'].rolling(25, min_periods=1, center=True).mean()
+    return df
+
+def calibrate_physics(df, probs_raw):
+    """
+    Applies invariant physical rules of association football:
+    - Pitch boundary constraints
+    - Six-yard box goal kick clearances
+    - Universal player disengagement & walking tempo stoppages
+    - Dynamic in-flight pass inertia
+    """
+    probs_cal = probs_raw.copy()
+    N = len(df)
+    oob = df['is_out_of_bounds'].values
+    p_spd = df['speed_all_roll_50'].values
+    p_spd_inst = df['overall_speed'].values
+    b_miss = df['ball_missing'].values
+    d_h = df['d_min_home'].fillna(999).values
+    d_a = df['d_min_away'].fillna(999).values
+    bx = df['ball_x'].values
+    b_spd = df['ball_speed'].fillna(0).values
+
+    h_idx, a_idx, d_idx = 0, 1, 2
+    last_h_contact = -999
+    last_a_contact = -999
+    missing_counter = 0
+
+    for i in range(N):
+        # 1. Pitch Boundary Invariant (ball out of field dimensions)
+        if oob[i] == 1:
+            probs_cal[i, d_idx] = 0.99
+            probs_cal[i, h_idx] = 0.005
+            probs_cal[i, a_idx] = 0.005
+            continue
+
+        if b_miss[i] == 1:
+            missing_counter += 1
+        else:
+            missing_counter = 0
+
+        # Direct Contact Detection (tight touch, clear proximity advantage, or isolated clearance)
+        has_h_touch = (d_h[i] < 0.4 and d_h[i] < d_a[i]) or (d_h[i] < 0.7 and d_a[i] > 1.5) or (d_h[i] < 2.5 and d_h[i] < d_a[i] - 1.8)
+        has_a_touch = (d_a[i] < 0.4 and d_a[i] < d_h[i]) or (d_a[i] < 0.7 and d_h[i] > 1.5) or (d_a[i] < 2.5 and d_a[i] < d_h[i] - 1.8)
+
+        if has_h_touch:
+            last_h_contact = i
+        if has_a_touch:
+            last_a_contact = i
+
+        frames_since_h = i - last_h_contact if last_h_contact >= 0 else 999
+        frames_since_a = i - last_a_contact if last_a_contact >= 0 else 999
+
+        # 2. Goal Kick Setup (Inside six-yard box, opponent retreated outside penalty area)
+        is_goal_kick_setup = ((bx[i] < 6.0 and d_a[i] > 11.0) or (bx[i] > 99.3 and d_h[i] > 11.0)) and (b_spd[i] < 1.0 or (d_h[i] > 0.4 and d_a[i] > 0.4))
+        
+        # 3. Universal Stationary Stoppage Setup:
+        # Walking tempo p_spd < 1.25, both teams disengaged > 1.0m from ball
+        is_stoppage_setup = (d_h[i] > 1.0 and d_a[i] > 1.0) and (p_spd[i] < 1.25 or p_spd_inst[i] < 1.20) and (frames_since_h > 20 or frames_since_a > 20)
+
+        # 4. Whistle Deceleration (Both teams walking < 1.12 m/s, disengaged > 2.2m from ball)
+        is_whistle_decel = p_spd_inst[i] < 1.12 and d_h[i] > 2.2 and d_a[i] > 2.2 and (last_h_contact >= 0 or last_a_contact >= 0) and (frames_since_h > 35 and frames_since_a > 35)
+
+        # 5. Out of Play from Missing Ball during walking tempo (< 1.25 m/s)
+        is_dead_missing = missing_counter > 25 and p_spd[i] < 1.25
+
+        if is_goal_kick_setup or is_stoppage_setup or is_whistle_decel or is_dead_missing:
+            probs_cal[i, d_idx] = max(probs_cal[i, d_idx], 0.98)
+            rem = (1.0 - probs_cal[i, d_idx]) / 2.0
+            probs_cal[i, h_idx] = rem
+            probs_cal[i, a_idx] = rem
+
+        # 6. Aerial Pass in Live Play (Missing ball while players are actively running > 1.25 m/s)
+        elif b_miss[i] == 1 and p_spd[i] > 1.25:
+            probs_cal[i, d_idx] = min(probs_cal[i, d_idx], 0.02)
+            if frames_since_h < frames_since_a:
+                probs_cal[i, h_idx] = max(probs_cal[i, h_idx], 0.95)
+                probs_cal[i, a_idx] = min(probs_cal[i, a_idx], 0.03)
+            else:
+                probs_cal[i, a_idx] = max(probs_cal[i, a_idx], 0.95)
+                probs_cal[i, h_idx] = min(probs_cal[i, h_idx], 0.03)
+
+        # 7. Pass Inertia in Live Play (Requires active running pace > 1.28 m/s, not walking)
+        elif frames_since_h < 60 and frames_since_h < frames_since_a and p_spd_inst[i] > 1.28 and p_spd[i] > 1.22 and d_h[i] <= d_a[i] + 1.0:
+            probs_cal[i, h_idx] = max(probs_cal[i, h_idx], 0.90)
+            probs_cal[i, d_idx] = min(probs_cal[i, d_idx], 0.05)
+            probs_cal[i, a_idx] = min(probs_cal[i, a_idx], 0.05)
+        elif frames_since_a < 60 and frames_since_a < frames_since_h and p_spd_inst[i] > 1.28 and p_spd[i] > 1.22 and d_a[i] <= d_h[i] + 1.0:
+            probs_cal[i, a_idx] = max(probs_cal[i, a_idx], 0.90)
+            probs_cal[i, d_idx] = min(probs_cal[i, d_idx], 0.05)
+            probs_cal[i, h_idx] = min(probs_cal[i, h_idx], 0.05)
+
+        s = probs_cal[i].sum()
+        if s > 0: probs_cal[i] /= s
+
+    return probs_cal
+
+def viterbi_decode(probs, trans_matrix, trans_scale=0.10):
+    """Dynamic programming Viterbi decoder with log-space transition penalties."""
+    N = len(probs)
+    K = 3
+    log_emissions = np.log(np.clip(probs, 1e-6, 1.0))
+    log_trans = np.log(np.clip(trans_matrix, 1e-12, 1.0)) * trans_scale
+
+    initial_probs = np.array([0.33, 0.33, 0.34])
+    log_viterbi = np.zeros((N, K))
+    backpointer = np.zeros((N, K), dtype=int)
+
+    log_viterbi[0] = np.log(initial_probs) + log_emissions[0]
+
+    for t in range(1, N):
+        trans_scores = log_viterbi[t-1, :, None] + log_trans
+        backpointer[t] = np.argmax(trans_scores, axis=0)
+        log_viterbi[t] = np.max(trans_scores, axis=0) + log_emissions[t]
+
+    best_path = np.zeros(N, dtype=int)
+    best_path[-1] = np.argmax(log_viterbi[-1])
+    for t in range(N - 2, -1, -1):
+        best_path[t] = backpointer[t + 1, best_path[t + 1]]
+
+    return best_path
+
+def apply_duration_filter(preds_arr, min_spell_len=35):
+    """Semi-Markov filter removing physically unfeasible micro-flickers (< 1.4 seconds)."""
+    segs = []
+    curr = preds_arr[0]; s = 0
+    for i in range(1, len(preds_arr)):
+        if preds_arr[i] != curr:
+            segs.append([curr, s, i - 1])
+            curr = preds_arr[i]; s = i
+    segs.append([curr, s, len(preds_arr) - 1])
+
+    cleaned = []
+    for lbl, s, e in segs:
+        dur = e - s + 1
+        if dur < min_spell_len and len(cleaned) > 0:
+            cleaned[-1][2] = e
+        else:
+            cleaned.append([lbl, s, e])
+
+    res = np.zeros(len(preds_arr), dtype=int)
+    for lbl, s, e in cleaned:
+        res[s : e + 1] = lbl
+    return res
+
 def main():
     print("="*100)
-    print(" GENERATING FULL-MATCH COMPETITION SUBMISSION CSV (ULTIMATE CHAMPION - 199,319 FRAMES)")
+    print(" GENERATING FULL-MATCH COMPETITION SUBMISSION CSV (UNCHEATED CHAMPION 5-FOLD CV)")
     print("="*100)
     t_start = time.time()
 
-    # 1. Fit StatsBomb 2D KDE & Load Markov Priors
-    print("\n[Stage 1] Loading StatsBomb Empirical Priors & Fitting 2D KDE...")
-    kde = fit_turnover_kde()
+    # 1. Load StatsBomb Markov Priors
+    print("\n[Stage 1] Loading StatsBomb Empirical Priors...")
     priors = load_statsbomb_priors()
     trans_matrix = build_markov_transition_matrix(priors)
-    print("  Markov Transition Matrix A initialized:")
-    print(np.round(trans_matrix, 5))
+    print("  Markov Transition Matrix initialized.")
 
-    # 2. Load Ground Truth & Metrica with StatsBomb Spatial Enrichment
-    print("\n[Stage 2] Preparing Augmented Training Datasets...")
+    # 2. Load & Augment Ground Truth + Metrica Datasets
+    print("\n[Stage 2] Preparing 78-Dimensional Augmented Datasets...")
     raw_barca = pd.read_csv('data/features_public_window.csv')
     raw_met = pd.read_csv('data/metrica_3games_features.csv')
 
-    df_barca = add_spatial_turnover_feature(augment_kinematic_features(raw_barca), kde)
-    df_met = add_spatial_turnover_feature(augment_kinematic_features(raw_met), kde)
+    df_barca = add_directional_features(raw_barca)
+    df_met = add_directional_features(raw_met)
 
-    all_features = [c for c in df_barca.columns if c not in ['video_frame', 'frame_id', 'label']]
-    joint_df = pd.concat([df_met[all_features + ['label']], df_barca[all_features + ['label']]], ignore_index=True)
-    sample_weights = np.ones(len(joint_df))
-    sample_weights[len(df_met):] = 30.0
+    feature_cols = [c for c in df_barca.columns if c not in ['video_frame', 'frame_id', 'label']]
+    label_map = {'H': 0, 'A': 1, 'D': 2}
+    inv_map = {0: 'H', 1: 'A', 2: 'D'}
+    y_true_barca = np.array([label_map[x] for x in df_barca['label']], dtype=np.int64)
 
-    # 3. Train Teacher Model
-    print("\n[Stage 3] Training Teacher Model on GT (30x) + Metrica (1x)...")
-    teacher = lgb.LGBMClassifier(n_estimators=300, learning_rate=0.035, num_leaves=38, random_state=42, verbosity=-1)
-    teacher.fit(joint_df[all_features], joint_df['label'], sample_weight=sample_weights)
-    classes = list(teacher.classes_)
-    h_idx = classes.index('H'); a_idx = classes.index('A'); d_idx = classes.index('D')
+    # 3. Train 5-Fold Cross-Validation Models (Strict Out-of-Fold Integrity)
+    print("\n[Stage 3] Training 5-Fold Cross-Validation Models (Zero Leakage, Fully Reproducible)...")
+    fold_size = 1500
+    n_folds = 5
+    models = []
+    oof_preds = np.zeros(len(df_barca), dtype=int)
 
-    # 4. Extract Match Play and Mine High-Confidence Pseudo-Labels
+    for fold in range(n_folds):
+        t0 = time.time()
+        val_start = fold * fold_size
+        val_end = (fold + 1) * fold_size
+
+        val_df = df_barca.iloc[val_start:val_end].copy().reset_index(drop=True)
+        val_y = y_true_barca[val_start:val_end]
+
+        train_mask = np.ones(len(df_barca), dtype=bool)
+        train_mask[val_start:val_end] = False
+        train_barca = df_barca[train_mask].copy()
+
+        joint_df = pd.concat([df_met[feature_cols + ['label']], train_barca[feature_cols + ['label']]], ignore_index=True)
+        sample_weights = np.ones(len(joint_df))
+        sample_weights[len(df_met):] = 30.0
+
+        X_train = joint_df[feature_cols].copy()
+        y_train = np.array([label_map[x] for x in joint_df['label']], dtype=np.int64)
+        X_val = val_df[feature_cols].copy()
+
+        clf = lgb.LGBMClassifier(n_estimators=300, learning_rate=0.04, num_leaves=38, random_state=42 + fold, verbosity=-1)
+        clf.fit(X_train, y_train, sample_weight=sample_weights)
+        models.append(clf)
+
+        p_ml_val = clf.predict_proba(X_val)
+        p_cal_val = calibrate_physics(val_df, p_ml_val)
+        v_raw_val = viterbi_decode(p_cal_val, trans_matrix, trans_scale=0.10)
+        v_filt_val = apply_duration_filter(v_raw_val, min_spell_len=35)
+
+        oof_preds[val_start:val_end] = v_filt_val
+        acc_fold = (val_y == v_filt_val).mean()
+        print(f"  Fold {fold+1}/{n_folds} complete in {time.time()-t0:.1f}s (Validation Frame Acc: {acc_fold:.2%})")
+
+    overall_oof_acc = (y_true_barca == oof_preds).mean()
+    print(f"\n  Overall Out-of-Fold Uncheated Frame Accuracy on Public Window: {overall_oof_acc:.2%}")
+
+    # 4. Extract Match Play and Infer Full Match
     paths = games.asset_paths(source="tactical")
     raw_atd = paths["atd_raw"]
 
@@ -221,76 +424,45 @@ def main():
 
     full_labels = np.full(total_video_frames, "X", dtype="<U1")
 
-    # Extract Half 1 features
-    print(f"\n[Stage 4] Extracting First Half features ({half1_start:,} .. {half1_end:,} = {half1_end-half1_start+1:,} frames)...")
+    # Half 1 Processing
+    print(f"\n[Stage 4] Extracting & Inferring First Half ({half1_start:,} .. {half1_end:,})...")
     t0 = time.time()
-    df_h1 = add_spatial_turnover_feature(extract_features_df(raw_atd, half1_start, half1_end), kde)
-    print(f"  Extracted Half 1 features in {time.time()-t0:.1f}s ({len(df_h1):,} rows, {len(all_features)} features).")
+    raw_h1 = extract_features_df(raw_atd, half1_start, half1_end)
+    df_h1 = add_directional_features(raw_h1)
+    print(f"  Extracted Half 1 in {time.time()-t0:.1f}s ({len(df_h1):,} rows).")
 
-    # Mine pseudo-labels from Half 1 outside GT window (18685 to 38684)
-    print("\n[Stage 5] Mining In-Domain Pseudo-Labels from Half 1 match play...")
-    mask_pseudo = (df_h1['video_frame'] >= 18685) & (df_h1['video_frame'] <= 38684)
-    df_unlabeled = df_h1[mask_pseudo].copy().reset_index(drop=True)
-    probs_unlabeled = teacher.predict_proba(df_unlabeled[all_features])
+    # Public window is the first 7,500 frames of Half 1 (frames 11185 .. 18684)
+    # Assign honest out-of-fold predictions to the public window
+    full_labels[half1_start : half1_start + len(oof_preds)] = [inv_map[x] for x in oof_preds]
+    print(f"  Assigned strict Out-of-Fold (OOF) predictions to public window ({len(oof_preds)} frames).")
 
-    pseudo_records = []
-    d_home_un = df_unlabeled['d_min_home'].fillna(99).values
-    d_away_un = df_unlabeled['d_min_away'].fillna(99).values
-    spd_un = df_unlabeled['speed_all_roll_2s'].values
+    # Predict remaining unseen frames of Half 1 (18685 .. 90651) with 5-fold ensemble
+    unseen_h1_df = df_h1.iloc[len(oof_preds):].copy().reset_index(drop=True)
+    if len(unseen_h1_df) > 0:
+        print(f"  Inferring unseen Half 1 frames ({len(unseen_h1_df):,} frames) with 5-Fold Ensemble...")
+        p_ens_unseen_h1 = np.mean([clf.predict_proba(unseen_h1_df[feature_cols]) for clf in models], axis=0)
+        p_cal_unseen_h1 = calibrate_physics(unseen_h1_df, p_ens_unseen_h1)
+        v_raw_unseen_h1 = viterbi_decode(p_cal_unseen_h1, trans_matrix, trans_scale=0.10)
+        v_filt_unseen_h1 = apply_duration_filter(v_raw_unseen_h1, min_spell_len=35)
+        full_labels[half1_start + len(oof_preds) : half1_end + 1] = [inv_map[x] for x in v_filt_unseen_h1]
 
-    for i in range(len(df_unlabeled)):
-        ph, pa, pd_val = probs_unlabeled[i, h_idx], probs_unlabeled[i, a_idx], probs_unlabeled[i, d_idx]
-        lbl = None
-        if ph > 0.95 and d_home_un[i] < 1.2:
-            lbl = 'H'
-        elif pa > 0.95 and d_away_un[i] < 1.2:
-            lbl = 'A'
-        elif pd_val > 0.90 and spd_un[i] < 1.10:
-            lbl = 'D'
-
-        if lbl is not None:
-            row_dict = df_unlabeled.iloc[i][all_features].to_dict()
-            row_dict['label'] = lbl
-            pseudo_records.append(row_dict)
-
-    df_pseudo = pd.DataFrame(pseudo_records)
-    print(f"  Mined {len(df_pseudo):,} pseudo-labels (distribution: {df_pseudo['label'].value_counts().to_dict()})")
-
-    # Train Student Model
-    print("\n[Stage 6] Training Student Model with In-Domain Self-Training & StatsBomb Topology...")
-    student_df = pd.concat([df_met[all_features + ['label']],
-                            df_pseudo[all_features + ['label']],
-                            df_barca[all_features + ['label']]], ignore_index=True)
-
-    student_weights = np.ones(len(student_df))
-    student_weights[len(df_met) : len(df_met) + len(df_pseudo)] = 3.0
-    student_weights[len(df_met) + len(df_pseudo) :] = 30.0
-
-    student = lgb.LGBMClassifier(n_estimators=350, learning_rate=0.035, num_leaves=38, random_state=42, verbosity=-1)
-    student.fit(student_df[all_features], student_df['label'], sample_weight=student_weights)
-    print("  Student Model successfully trained.")
-
-    # Infer Half 1 with Bayesian Viterbi Sequence Decoder
-    print("\n[Stage 7] Decoding Half 1 with StatsBomb Bayesian Viterbi Dynamic Programming...")
+    # Half 2 Processing (all unseen frames 110808 .. 190197)
+    print(f"\n[Stage 5] Extracting & Inferring Second Half ({half2_start:,} .. {half2_end:,})...")
     t0 = time.time()
-    probs_h1 = student.predict_proba(df_h1[all_features])
-    viterbi_preds_h1 = viterbi_decode(probs_h1, trans_matrix, classes)
-    full_labels[half1_start : half1_end + 1] = viterbi_preds_h1
-    print(f"  First Half decoded in {time.time()-t0:.1f}s.")
+    raw_h2 = extract_features_df(raw_atd, half2_start, half2_end)
+    df_h2 = add_directional_features(raw_h2)
+    print(f"  Extracted Half 2 in {time.time()-t0:.1f}s ({len(df_h2):,} rows).")
 
-    # Half 2 Processing
-    print(f"\n[Stage 8] Processing Second Half ({half2_start:,} .. {half2_end:,} = {half2_end-half2_start+1:,} frames)...")
-    t0 = time.time()
-    df_h2 = add_spatial_turnover_feature(extract_features_df(raw_atd, half2_start, half2_end), kde)
-    print(f"  Extracted Half 2 features in {time.time()-t0:.1f}s ({len(df_h2):,} rows).")
+    print(f"  Inferring Half 2 ({len(df_h2):,} frames) with 5-Fold Ensemble...")
+    p_ens_h2 = np.mean([clf.predict_proba(df_h2[feature_cols]) for clf in models], axis=0)
+    p_cal_h2 = calibrate_physics(df_h2, p_ens_h2)
+    v_raw_h2 = viterbi_decode(p_cal_h2, trans_matrix, trans_scale=0.10)
+    v_filt_h2 = apply_duration_filter(v_raw_h2, min_spell_len=35)
 
-    probs_h2 = student.predict_proba(df_h2[all_features])
-    viterbi_preds_h2 = viterbi_decode(probs_h2, trans_matrix, classes)
-    full_labels[half2_start : half2_end + 1] = viterbi_preds_h2
-    print(f"  Second Half decoded in {time.time()-t0:.1f}s.")
+    full_labels[half2_start : half2_end + 1] = [inv_map[x] for x in v_filt_h2]
 
-    # Write Full Submission CSV
-    print(f"\n[Stage 9] Writing submission file to {OUT_PATH}...")
+    # 6. Write Full Submission CSV
+    print(f"\n[Stage 6] Writing verified submission file to {OUT_PATH}...")
     if not os.path.exists(RESULTS_DIR):
         os.makedirs(RESULTS_DIR)
 
@@ -300,13 +472,13 @@ def main():
 
     print(f"  Written {len(full_labels):,} rows in {time.time()-t_start:.1f}s total.")
 
-    # Validate Submission
-    print("\n[Stage 10] Running Official Competition Validator (validate_submission.py)...")
+    # 7. Validate Submission
+    print("\n[Stage 7] Running Official Competition Validator (validate_submission.py)...")
     val_cmd = f"python evaluation/validate_submission.py {OUT_PATH}"
     os.system(val_cmd)
 
-    # Score Against Public Ground Truth
-    print("\n[Stage 11] Scoring Against Public Ground Truth (run_evaluation.py)...")
+    # 8. Score Against Public Ground Truth
+    print("\n[Stage 8] Scoring Against Public Ground Truth (run_evaluation.py)...")
     os.system("python evaluation/run_evaluation.py")
 
 if __name__ == '__main__':
