@@ -1,37 +1,43 @@
-"""Barca Vision Labeler: High-Performance Tactical Annotation & Tracking Studio.
+"""Barca Vision Model Analyzer: inspect a possession model against ground truth.
 
-Flask backend serving real-time 25 fps tracking data, byte-offset frame indexing,
-AI model pre-annotations, spell/interval labeling, and ML dataset export.
+Flask backend that serves 25 fps tracking data (byte-offset frame index), loads model
+submission CSVs (frame,label), and analyses them against the public ground truth with the
+official scorer (evaluation/possession_metrics.py). It does not label anything by hand.
 """
 
+import io
+import math
 import os
 import sys
-import json
-import math
 import time
 from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 from flask import Flask, jsonify, request, render_template, send_from_directory
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, os.path.join(REPO_ROOT, "evaluation"))
 
 from games import GAMES, GAME  # noqa: E402
+import possession_metrics as pm  # noqa: E402
 
 app = Flask(__name__, template_folder=os.path.join(HERE, "templates"))
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # a submission CSV is ~2 MB
 
-# Path configurations
 PITCH_LEN, PITCH_WID = GAMES[GAME]["pitch"]  # 105.3m, 68.0m
 FPS = 25
 TOTAL_FRAMES = GAMES[GAME]["n_video_frames"]  # 199319
 
-# Candidate locations for data files (supports flexible user/friend directory setups on Mac and Windows)
+# Candidate locations for data files (supports flexible directory setups on Mac and Windows)
 ATD_CANDIDATES = [
     os.path.join(REPO_ROOT, "data", "tactical", "BAR-ATH_tactical_atd.txt"),
     os.path.join(REPO_ROOT, "data", "BAR-ATH_tactical_atd.txt"),
     os.path.join(REPO_ROOT, "..", "data", "tactical", "BAR-ATH_tactical_atd.txt"),
     os.path.join(REPO_ROOT, "BAR-ATH_tactical_atd.txt"),
 ]
+META_CANDIDATES = [p.replace("_atd.txt", "_atd.xml") for p in ATD_CANDIDATES]
 
 VIDEO_CANDIDATES = [
     os.path.join(REPO_ROOT, "data", "broadcast", "BAR-ATH_broadcast.mp4"),
@@ -41,8 +47,15 @@ VIDEO_CANDIDATES = [
     os.path.join(REPO_ROOT, "data", "tactical", "BAR-ATH_tactical.mp4"),
     os.path.join(REPO_ROOT, "data", "BAR-ATH_tactical.mp4"),
     os.path.join(REPO_ROOT, "BAR-ATH_tactical.mp4"),
-    r"C:\Users\harve\Antigravity\Barca\BAR-ATH_broadcast.mp4",
 ]
+
+RESULTS_DIR = os.path.join(REPO_ROOT, "evaluation", "results")
+GT_PUBLIC_PATH = os.path.join(REPO_ROOT, "evaluation", "gt", "BAR-ATH_possession_gt_public.csv")
+
+LETTERS = pm.LABELS  # ("H", "A", "D", "X") -> codes 0..3
+X_CODE = 3
+HANDOVER_MARGIN = 50  # frames (2 s): an error this close to a true change of possession is a handover error
+BALL_MISSING_SHARE = 0.5  # an error segment is "ball missing" if at least this share of its frames have no ball
 
 
 def resolve_existing_path(candidates: List[str]) -> Optional[str]:
@@ -54,18 +67,29 @@ def resolve_existing_path(candidates: List[str]) -> Optional[str]:
 
 
 RAW_ATD_PATH = resolve_existing_path(ATD_CANDIDATES) or ATD_CANDIDATES[0]
-GT_PUBLIC_PATH = os.path.join(REPO_ROOT, "evaluation", "gt", "BAR-ATH_possession_gt_public.csv")
-SESSION_FILE = os.path.join(REPO_ROOT, "data", "labeler_session.json")
-EXPORT_CSV_PATH = os.path.join(REPO_ROOT, "data", "annotated_possession_labels.csv")
+META_PATH = resolve_existing_path(META_CANDIDATES)
 
 # Global state
 BYTE_OFFSETS: List[int] = []
-REFERENCE_GT: Dict[int, str] = {}
-USER_LABELS: Dict[int, str] = {}  # {video_frame: 'H'|'A'|'D'}
+BALL_MISSING = np.zeros(TOTAL_FRAMES, dtype=bool)
+SLOT_TEAM: List[int] = []  # per track slot: 0 home, 1 away, from the ATD metadata XML
+GT_CODES = np.full(TOTAL_FRAMES, X_CODE, dtype=np.int8)
+MODELS: Dict[str, np.ndarray] = {}  # name -> codes 0..3 per video frame
+
+
+def init_slot_teams():
+    """Which team each track slot belongs to, read from the metadata XML (not hard-coded)."""
+    global SLOT_TEAM
+    if META_PATH is None:
+        print("[Analyzer] Warning: ATD metadata XML not found; assuming slots 1-24 home")
+        SLOT_TEAM = [0] * 24 + [1] * 22
+        return
+    from starter.baseline import team_of_each_track
+    SLOT_TEAM = [int(t) for t in team_of_each_track(META_PATH)]
 
 
 def init_byte_offsets():
-    """Build an in-memory index of byte offsets for O(1) random frame access."""
+    """Index byte offsets for O(1) frame access and note which frames have no ball."""
     global BYTE_OFFSETS
     if BYTE_OFFSETS:
         return
@@ -74,51 +98,32 @@ def init_byte_offsets():
     if os.path.exists(RAW_ATD_PATH):
         with open(RAW_ATD_PATH, "rb") as f:
             offset = 0
-            for line in f:
+            for i, line in enumerate(f):
                 offsets.append(offset)
                 offset += len(line)
+                if i < TOTAL_FRAMES:
+                    BALL_MISSING[i] = line.rstrip().rsplit(b":", 1)[-1][:1] == b"N"
         BYTE_OFFSETS = offsets
-        print(f"[Labeler] Indexed {len(BYTE_OFFSETS)} frames in {time.time() - t0:.2f}s")
+        print(f"[Analyzer] Indexed {len(BYTE_OFFSETS)} frames in {time.time() - t0:.2f}s")
     else:
-        print(f"[Labeler] Warning: Raw tracking file not found at {RAW_ATD_PATH}")
+        print(f"[Analyzer] Warning: Raw tracking file not found at {RAW_ATD_PATH}")
 
 
 def init_reference_gt():
-    """Load the official public ground truth for comparison and reference."""
-    global REFERENCE_GT
+    """Load the public ground truth (first 5 minutes of play; everything else is X)."""
+    global GT_CODES
     if os.path.exists(GT_PUBLIC_PATH):
-        with open(GT_PUBLIC_PATH, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("frame"):
-                    continue
-                parts = line.split(",")
-                if len(parts) >= 2:
-                    vf = int(parts[0])
-                    lbl = parts[1].strip()
-                    if lbl in ("H", "A", "D"):
-                        REFERENCE_GT[vf] = lbl
-        print(f"[Labeler] Loaded {len(REFERENCE_GT)} reference GT frames from {GT_PUBLIC_PATH}")
+        frame = pm.read_label_csv(GT_PUBLIC_PATH)
+        GT_CODES = pm.label_codes(frame)
+        scored = int((GT_CODES != X_CODE).sum())
+        print(f"[Analyzer] Loaded public ground truth: {scored} graded frames")
+    else:
+        print(f"[Analyzer] Warning: ground truth not found at {GT_PUBLIC_PATH}")
 
 
-def load_saved_session():
-    """Load previously saved user labeling session if available."""
-    global USER_LABELS
-    if os.path.exists(SESSION_FILE):
-        try:
-            with open(SESSION_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                USER_LABELS = {int(k): v for k, v in data.items() if v in ("H", "A", "D")}
-            print(f"[Labeler] Restored session with {len(USER_LABELS)} labeled frames")
-        except Exception as e:
-            print(f"[Labeler] Could not load session file: {e}")
-
-
-def save_session():
-    """Persist user annotations to session JSON."""
-    os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
-    with open(SESSION_FILE, "w", encoding="utf-8") as f:
-        json.dump(USER_LABELS, f)
+def gt_span() -> Optional[Tuple[int, int]]:
+    scored = np.flatnonzero(GT_CODES != X_CODE)
+    return (int(scored[0]), int(scored[-1])) if len(scored) else None
 
 
 def parse_raw_line(line_str: str) -> Tuple[int, List[dict], Optional[dict]]:
@@ -138,10 +143,10 @@ def parse_raw_line(line_str: str) -> Tuple[int, List[dict], Optional[dict]]:
             s = float(vals[2]) if len(vals) > 2 else 0.0
             if math.isnan(s):
                 s = 0.0
-            team = "H" if slot_idx < 23 else "A"
+            is_home = slot_idx < len(SLOT_TEAM) and SLOT_TEAM[slot_idx] == 0
             players.append({
                 "slot": slot_idx + 1,
-                "team": team,
+                "team": "H" if is_home else "A",
                 "x": x_norm,
                 "y": y_norm,
                 "s": round(s, 2)
@@ -171,7 +176,7 @@ def parse_raw_line(line_str: str) -> Tuple[int, List[dict], Optional[dict]]:
 
 
 def compute_frame_telemetry(players: List[dict], ball: Optional[dict]) -> dict:
-    """Compute physical metrics, ball proximity, and AI possession heuristic."""
+    """Compute physical metrics and ball proximity for one frame."""
     h_players = [p for p in players if p["team"] == "H"]
     a_players = [p for p in players if p["team"] == "A"]
 
@@ -212,53 +217,6 @@ def compute_frame_telemetry(players: List[dict], ball: Optional[dict]) -> dict:
             p["dist_ball"] = None
         margin = 0.0
 
-    # Heuristic AI Suggestion
-    ai_label = "D"
-    ai_conf = 0.50
-    probs = {"H": 0.33, "A": 0.33, "D": 0.34}
-
-    # If ball is present and someone is close or clear margin exists -> Live possession
-    ball_is_active = (ball is not None) and (min_dh < 4.0 or min_da < 4.0 or abs(margin) > 2.5)
-
-    if overall_speed < 0.90 and not ball_is_active:
-        # High likelihood of stoppage / dead ball
-        ai_label = "D"
-        ai_conf = 0.85
-        probs = {"H": 0.07, "A": 0.08, "D": 0.85}
-    elif ball is not None:
-        if margin > 1.2:
-            ai_label = "H"
-            ai_conf = min(0.95, 0.60 + margin * 0.06)
-            probs = {"H": round(ai_conf, 2), "A": round((1 - ai_conf) * 0.7, 2), "D": round((1 - ai_conf) * 0.3, 2)}
-        elif margin < -1.2:
-            ai_label = "A"
-            ai_conf = min(0.95, 0.60 + abs(margin) * 0.06)
-            probs = {"A": round(ai_conf, 2), "H": round((1 - ai_conf) * 0.7, 2), "D": round((1 - ai_conf) * 0.3, 2)}
-        else:
-            # Contested ball
-            if margin >= 0:
-                ai_label = "H"
-                ai_conf = 0.55
-                probs = {"H": 0.55, "A": 0.35, "D": 0.10}
-            else:
-                ai_label = "A"
-                ai_conf = 0.55
-                probs = {"A": 0.55, "H": 0.35, "D": 0.10}
-    else:
-        # Ball occluded: check speeds and centroid
-        if overall_speed < 1.0:
-            ai_label = "D"
-            ai_conf = 0.75
-            probs = {"H": 0.12, "A": 0.13, "D": 0.75}
-        elif h_cx > 0.55:
-            ai_label = "H"
-            ai_conf = 0.65
-            probs = {"H": 0.65, "A": 0.25, "D": 0.10}
-        elif a_cx < 0.45:
-            ai_label = "A"
-            ai_conf = 0.65
-            probs = {"A": 0.65, "H": 0.25, "D": 0.10}
-
     return {
         "nearest_home": nearest_h,
         "nearest_away": nearest_a,
@@ -268,11 +226,6 @@ def compute_frame_telemetry(players: List[dict], ball: Optional[dict]) -> dict:
         "home_speed": round(h_speed, 2),
         "away_speed": round(a_speed, 2),
         "overall_speed": round(overall_speed, 2),
-        "ai_suggestion": {
-            "label": ai_label,
-            "confidence": round(ai_conf, 2),
-            "probs": probs
-        }
     }
 
 
@@ -289,7 +242,6 @@ def get_single_frame(video_frame: int) -> Optional[dict]:
     frame_id, players, ball = parse_raw_line(line)
     telemetry = compute_frame_telemetry(players, ball)
 
-    # Format timestamp MM:SS.ff
     seconds_total = video_frame / float(FPS)
     minutes = int(seconds_total // 60)
     seconds = int(seconds_total % 60)
@@ -306,8 +258,106 @@ def get_single_frame(video_frame: int) -> Optional[dict]:
         "players": players,
         "ball": ball,
         "telemetry": telemetry,
-        "label": USER_LABELS.get(video_frame),
-        "gt_label": REFERENCE_GT.get(video_frame)
+        "gt_label": LETTERS[GT_CODES[video_frame]],
+        "preds": {name: LETTERS[codes[video_frame]] for name, codes in MODELS.items()},
+    }
+
+
+# ===================== MODEL LOADING & ANALYSIS =====================
+
+def register_model(name: str, source) -> Optional[str]:
+    """Read + validate a frame,label CSV and store it. Returns an error string or None."""
+    try:
+        frame = pm.read_label_csv(source)
+    except Exception as exc:  # unreadable / wrong columns
+        return f"could not read CSV: {exc}"
+    reason = pm.validate_submission(frame, TOTAL_FRAMES)
+    if reason:
+        return reason
+    MODELS[name] = pm.label_codes(frame)
+    return None
+
+
+def available_csvs() -> List[str]:
+    if not os.path.isdir(RESULTS_DIR):
+        return []
+    return sorted(f for f in os.listdir(RESULTS_DIR) if f.lower().endswith(".csv"))
+
+
+def runs_of(codes: np.ndarray) -> List[list]:
+    """Run-length encode a code array as [start, end_inclusive, code]."""
+    if not len(codes):
+        return []
+    change = np.flatnonzero(np.diff(codes)) + 1
+    starts = np.concatenate(([0], change))
+    ends = np.concatenate((change - 1, [len(codes) - 1]))
+    return [[int(s), int(e), int(codes[s])] for s, e in zip(starts, ends)]
+
+
+def error_mask(pred: np.ndarray) -> np.ndarray:
+    """True where the ground truth is scored and the model disagrees (an X counts as a miss)."""
+    return (GT_CODES != X_CODE) & (pred != GT_CODES)
+
+
+def analyse(pred: np.ndarray) -> dict:
+    """Official metrics plus a breakdown of where the model's errors fall."""
+    res = pm.evaluate(GT_CODES, pred)
+    per_class = {k: {"f1": v["f1"], "precision": v["precision"], "recall": v["recall"], "support": v["support"]}
+                 for k, v in res["per_class"].items()}
+
+    err = error_mask(pred)
+    graded = int((GT_CODES != X_CODE).sum())
+    gt16 = GT_CODES.astype(np.int16)
+    gt_change = np.flatnonzero(np.diff(gt16) != 0) + 1
+    gt_change = gt_change[(GT_CODES[gt_change] != X_CODE) & (GT_CODES[gt_change - 1] != X_CODE)]
+
+    # error segments: contiguous stretches with the same (truth, prediction) pair
+    pair = np.where(err, gt16 * 4 + pred, -1)
+    segments = []
+    for start, end, key in runs_of(pair):
+        if key < 0:
+            continue
+        missing = float(BALL_MISSING[start:end + 1].mean())
+        lo = np.searchsorted(gt_change, start - HANDOVER_MARGIN)
+        hi = np.searchsorted(gt_change, end + HANDOVER_MARGIN, side="right")
+        segments.append({
+            "start": start, "end": end, "frames": end - start + 1,
+            "seconds": round((end - start + 1) / FPS, 2),
+            "truth": LETTERS[key // 4], "pred": LETTERS[key % 4],
+            "ball_missing": round(missing, 2),
+            "handover": bool(hi > lo),
+        })
+
+    def frames_where(cond):
+        return int(sum(s["frames"] for s in segments if cond(s)))
+
+    breakdown = {
+        "error_frames": int(err.sum()),
+        "graded_frames": graded,
+        "ball_missing": frames_where(lambda s: s["ball_missing"] >= BALL_MISSING_SHARE),
+        "ball_visible": frames_where(lambda s: s["ball_missing"] < BALL_MISSING_SHARE),
+        "handover": frames_where(lambda s: s["handover"]),
+        "mid_possession": frames_where(lambda s: not s["handover"]),
+        "by_pair": {},
+    }
+    for s in segments:
+        key = f"{s['truth']}>{s['pred']}"
+        breakdown["by_pair"][key] = breakdown["by_pair"].get(key, 0) + s["frames"]
+
+    return {
+        "metrics": {
+            "spell_f1": res["spell_f1_mean"],
+            "macro_f1": res["macro_f1"],
+            "accuracy": res["accuracy"],
+            "n_gt_spells": res["n_gt_spells"],
+            "n_pred_spells": res["n_pred_spells"],
+            "mean_spell_s": res["mean_spell_duration_s"],
+            "gt_mean_spell_s": res["gt_mean_spell_duration_s"],
+            "n_abstain_on_graded": res["n_abstain_on_graded"],
+            "per_class": per_class,
+        },
+        "breakdown": breakdown,
+        "segments": segments,
     }
 
 
@@ -315,7 +365,6 @@ def get_single_frame(video_frame: int) -> Optional[dict]:
 
 @app.route("/")
 def index():
-    """Serve the primary tactical labeling interface."""
     return render_template("index.html")
 
 
@@ -323,7 +372,7 @@ def index():
 def api_config():
     """Return match dimensions, frame bounds, and initial state."""
     video_path = resolve_existing_path(VIDEO_CANDIDATES)
-
+    span = gt_span()
     return jsonify({
         "game": GAME,
         "total_frames": TOTAL_FRAMES,
@@ -333,14 +382,12 @@ def api_config():
         "default_video_offset": 4013,  # Calibrated kickoff alignment offset
         "video_detected": video_path is not None,
         "video_name": os.path.basename(video_path) if video_path else None,
-        "user_labels_count": len(USER_LABELS),
-        "gt_count": len(REFERENCE_GT)
+        "gt_span": list(span) if span else None,
     })
 
 
 @app.route("/api/frame/<int:video_frame>")
 def api_frame(video_frame):
-    """Retrieve detailed data for a specific frame."""
     frame_data = get_single_frame(video_frame)
     if frame_data is None:
         return jsonify({"error": "Frame out of bounds"}), 404
@@ -352,7 +399,7 @@ def api_chunk():
     """Return a contiguous chunk of frames for smooth frontend playback."""
     start = int(request.args.get("start", 11185))
     length = int(request.args.get("length", 100))
-    length = min(max(length, 1), 300)  # Bound chunk between 1 and 300 frames
+    length = min(max(length, 1), 300)
 
     frames = []
     end = min(start + length, len(BYTE_OFFSETS))
@@ -360,157 +407,72 @@ def api_chunk():
         fd = get_single_frame(vf)
         if fd:
             frames.append(fd)
+    return jsonify({"start": start, "end": end, "count": len(frames), "frames": frames})
 
+
+@app.route("/api/models")
+def api_models():
     return jsonify({
-        "start": start,
-        "end": end,
-        "count": len(frames),
-        "frames": frames
+        "loaded": sorted(MODELS),
+        "available": [f for f in available_csvs() if os.path.splitext(f)[0] not in MODELS],
     })
 
 
-@app.route("/api/label", methods=["POST"])
-def api_label():
-    """Tag a single frame or interval with H, A, D, or clear."""
-    data = request.get_json(force=True)
-    frame = data.get("frame")
-    label = data.get("label")  # 'H', 'A', 'D', or None/'X' to clear
-
-    if frame is None or not (0 <= frame < TOTAL_FRAMES):
-        return jsonify({"error": "Invalid frame"}), 400
-
-    if label in ("H", "A", "D"):
-        USER_LABELS[frame] = label
-    else:
-        USER_LABELS.pop(frame, None)
-
-    save_session()
-    return jsonify({"success": True, "frame": frame, "label": USER_LABELS.get(frame)})
+@app.route("/api/models/load", methods=["POST"])
+def api_models_load():
+    """Load a CSV from evaluation/results/ by file name."""
+    data = request.get_json(force=True, silent=True) or {}
+    fname = os.path.basename(str(data.get("file", "")))  # basename: never read outside results/
+    path = os.path.join(RESULTS_DIR, fname)
+    if not fname.lower().endswith(".csv") or not os.path.isfile(path):
+        return jsonify({"error": f"{fname or 'file'} not found in evaluation/results/"}), 404
+    name = os.path.splitext(fname)[0]
+    err = register_model(name, path)
+    if err:
+        return jsonify({"error": f"{fname}: {err}"}), 400
+    return jsonify({"success": True, "name": name})
 
 
-@app.route("/api/label_range", methods=["POST"])
-def api_label_range():
-    """Tag a range of frames [start, end] with H, A, D, or clear."""
-    data = request.get_json(force=True)
-    start = int(data.get("start", 0))
-    end = int(data.get("end", 0))
-    label = data.get("label")
-
-    if start > end:
-        start, end = end, start
-
-    start = max(0, start)
-    end = min(TOTAL_FRAMES - 1, end)
-
-    count = 0
-    for vf in range(start, end + 1):
-        if label in ("H", "A", "D"):
-            USER_LABELS[vf] = label
-        else:
-            USER_LABELS.pop(vf, None)
-        count += 1
-
-    save_session()
-    return jsonify({"success": True, "start": start, "end": end, "updated_frames": count})
+@app.route("/api/models/upload", methods=["POST"])
+def api_models_upload():
+    """Load a CSV picked in the browser. Kept in memory only."""
+    up = request.files.get("file")
+    if up is None or not up.filename:
+        return jsonify({"error": "no file"}), 400
+    name = os.path.splitext(os.path.basename(up.filename))[0]
+    err = register_model(name, io.BytesIO(up.read()))
+    if err:
+        return jsonify({"error": f"{up.filename}: {err}"}), 400
+    return jsonify({"success": True, "name": name})
 
 
-@app.route("/api/labels_overview")
-def api_labels_overview():
-    """Return compact run-length encoded spells and label statistics."""
-    if not USER_LABELS:
-        return jsonify({
-            "spells": [],
-            "stats": {"H": 0, "A": 0, "D": 0, "total": 0, "spells_count": 0, "mean_duration": 0.0}
-        })
+@app.route("/api/models/remove", methods=["POST"])
+def api_models_remove():
+    data = request.get_json(force=True, silent=True) or {}
+    MODELS.pop(str(data.get("name", "")), None)
+    return jsonify({"success": True})
 
-    sorted_frames = sorted(USER_LABELS.keys())
-    spells = []
-    current_label = None
-    current_start = None
-    prev_frame = None
 
-    counts = {"H": 0, "A": 0, "D": 0}
-
-    for vf in sorted_frames:
-        lbl = USER_LABELS[vf]
-        counts[lbl] += 1
-
-        if current_label is None:
-            current_label = lbl
-            current_start = vf
-        elif lbl != current_label or vf != prev_frame + 1:
-            # End current spell
-            duration_sec = round((prev_frame - current_start + 1) / float(FPS), 2)
-            spells.append({
-                "start": current_start,
-                "end": prev_frame,
-                "label": current_label,
-                "duration_sec": duration_sec
-            })
-            current_label = lbl
-            current_start = vf
-        prev_frame = vf
-
-    if current_label is not None and prev_frame is not None:
-        duration_sec = round((prev_frame - current_start + 1) / float(FPS), 2)
-        spells.append({
-            "start": current_start,
-            "end": prev_frame,
-            "label": current_label,
-            "duration_sec": duration_sec
-        })
-
-    total_labeled = sum(counts.values())
-    alive_count = counts["H"] + counts["A"]
-    possession_spells = [s for s in spells if s["label"] in ("H", "A")]
-    mean_dur = round((alive_count / float(FPS) / len(possession_spells)), 2) if possession_spells else 0.0
-
+@app.route("/api/ribbon")
+def api_ribbon():
+    """Run-length encoded ground truth, each model, and each model's error stretches."""
     return jsonify({
-        "spells": spells,
-        "stats": {
-            "H": counts["H"],
-            "A": counts["A"],
-            "D": counts["D"],
-            "total": total_labeled,
-            "spells_count": len(possession_spells),
-            "mean_duration": mean_dur
-        }
+        "letters": list(LETTERS),
+        "gt": runs_of(GT_CODES),
+        "models": {n: runs_of(c) for n, c in MODELS.items()},
+        "errors": {n: [r for r in runs_of(error_mask(c).astype(np.int8)) if r[2] == 1]
+                   for n, c in MODELS.items()},
     })
 
 
-@app.route("/api/ai_fill_range", methods=["POST"])
-def api_ai_fill_range():
-    """Automatically populate labels using AI heuristic over a range."""
-    data = request.get_json(force=True)
-    start = int(data.get("start", 11185))
-    end = int(data.get("end", 11450))
-
-    if start > end:
-        start, end = end, start
-
-    start = max(0, start)
-    end = min(TOTAL_FRAMES - 1, end)
-
-    count = 0
-    for vf in range(start, end + 1):
-        fd = get_single_frame(vf)
-        if fd:
-            suggested = fd["telemetry"]["ai_suggestion"]["label"]
-            USER_LABELS[vf] = suggested
-            count += 1
-
-    save_session()
-    return jsonify({"success": True, "start": start, "end": end, "filled_count": count})
-
-
-@app.route("/api/load_reference_gt", methods=["POST"])
-def api_load_reference_gt():
-    """Copy official 5-minute ground truth into user's session."""
-    global USER_LABELS
-    for vf, lbl in REFERENCE_GT.items():
-        USER_LABELS[vf] = lbl
-    save_session()
-    return jsonify({"success": True, "loaded_count": len(REFERENCE_GT)})
+@app.route("/api/analysis")
+def api_analysis():
+    name = request.args.get("name", "")
+    if name not in MODELS:
+        return jsonify({"error": "model not loaded"}), 404
+    if not (GT_CODES != X_CODE).any():
+        return jsonify({"error": "no ground truth available"}), 400
+    return jsonify(analyse(MODELS[name]))
 
 
 @app.route("/api/video")
@@ -522,88 +484,18 @@ def serve_video():
     return jsonify({"error": "Video file not found on server. Use client-side file picker."}), 404
 
 
-@app.route("/api/clear_all", methods=["POST"])
-def api_clear_all():
-    """Clear all user annotations."""
-    global USER_LABELS
-    USER_LABELS.clear()
-    save_session()
-    return jsonify({"success": True})
-
-
-@app.route("/api/export_csv", methods=["POST"])
-def api_export_csv():
-    """Export all user annotations to competition-compatible CSV."""
-    os.makedirs(os.path.dirname(EXPORT_CSV_PATH), exist_ok=True)
-    with open(EXPORT_CSV_PATH, "w", encoding="utf-8") as f:
-        f.write("frame,label\n")
-        for vf in range(TOTAL_FRAMES):
-            lbl = USER_LABELS.get(vf, "X")
-            f.write(f"{vf},{lbl}\n")
-
-    return jsonify({
-        "success": True,
-        "export_path": EXPORT_CSV_PATH,
-        "labeled_count": len(USER_LABELS)
-    })
-
-
-@app.route("/api/export_training_set", methods=["POST"])
-def api_export_training_set():
-    """Extract and compile ML-ready training set from labeled frames."""
-    if not USER_LABELS:
-        return jsonify({"error": "No frames are currently labeled."}), 400
-
-    labels_csv = os.path.join(REPO_ROOT, "data", "custom_training_labels.csv")
-    dataset_csv = os.path.join(REPO_ROOT, "data", "custom_training_dataset.csv")
-    os.makedirs(os.path.dirname(labels_csv), exist_ok=True)
-
-    sorted_labeled = sorted(USER_LABELS.keys())
-    with open(labels_csv, "w", encoding="utf-8") as f:
-        f.write("video_frame,possession\n")
-        for vf in sorted_labeled:
-            f.write(f"{vf},{USER_LABELS[vf]}\n")
-
-    # Merge with pre-extracted features if available
-    features_15min = os.path.join(REPO_ROOT, "data", "features_first_15min_play.csv")
-    features_public = os.path.join(REPO_ROOT, "data", "features_public_window.csv")
-    feat_source = None
-    if os.path.exists(features_15min):
-        feat_source = features_15min
-    elif os.path.exists(features_public):
-        feat_source = features_public
-
-    merged_count = 0
-    if feat_source:
-        try:
-            import pandas as pd
-            feat_df = pd.read_csv(feat_source)
-            lbl_df = pd.DataFrame(list(USER_LABELS.items()), columns=["video_frame", "possession"])
-            merged_df = pd.merge(feat_df, lbl_df, on="video_frame", how="inner")
-            merged_df.to_csv(dataset_csv, index=False)
-            merged_count = len(merged_df)
-        except Exception as e:
-            print(f"[Labeler] Feature merge error: {e}")
-
-    return jsonify({
-        "success": True,
-        "labels_file": labels_csv,
-        "dataset_file": dataset_csv if merged_count > 0 else None,
-        "labeled_count": len(sorted_labeled),
-        "merged_features_count": merged_count,
-        "min_frame": sorted_labeled[0],
-        "max_frame": sorted_labeled[-1]
-    })
-
-
 def initialize():
     """Initialize index and datasets on boot."""
+    init_slot_teams()
     init_byte_offsets()
     init_reference_gt()
-    load_saved_session()
+    # Pre-load a committed baseline so the UI has something to show on a fresh start.
+    path = os.path.join(RESULTS_DIR, "baseline_smooth50.csv")
+    if os.path.isfile(path):
+        register_model("baseline_smooth50", path)
 
 
 if __name__ == "__main__":
     initialize()
-    print("[Labeler] Starting server on http://127.0.0.1:5000 ...")
+    print("[Analyzer] Starting server on http://127.0.0.1:5000 ...")
     app.run(host="127.0.0.1", port=5000, debug=False)

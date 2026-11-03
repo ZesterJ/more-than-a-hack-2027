@@ -1,93 +1,92 @@
-# ⚽ Barca Vision Labeler -- Tactical & Video Annotation Studio
+# Barca Vision Analyzer -- possession model vs ground truth
 
-**Barca Vision Labeler** is a high-performance, browser-based tactical video annotation and tracking studio built specifically for the **More Than A Hack 2027** ball possession challenge (FC Barcelona vs Athletic Club).
+A browser tool for inspecting a possession model. Load a model's submission CSV and see, frame by
+frame, where it agrees and disagrees with the ground truth, next to the match video (optional) and
+a 2D radar drawn from the tracking data.
 
-It integrates the **full-match broadcast video** side-by-side with a **2D tactical radar minimap**, offering real-time 25 fps synchronization, physics telemetry, AI pre-annotations, and 10x-speed spell labeling hotkeys.
+It does **not** label anything by hand. Every label shown is either the public ground truth or a
+model you loaded. (The folder is still called `labeler/` so the launchers keep working.)
 
 ---
 
-## 🚀 3-Minute Setup Guide for Collaborators
+## Setup
 
-If you already have the competition match files (tracking text file and match video), getting started takes 3 simple steps:
-
-### 1. Install Dependencies
-Only 3 lightweight Python packages are required (no heavy deep learning libraries needed to run the labeler):
 ```bash
-pip install -r labeler/requirements.txt
+pip install -r labeler/requirements.txt        # flask, numpy, pandas
 ```
-*(Or manually: `pip install flask numpy pandas`)*
 
-### 2. Verify Your Match Data Location
-Ensure your data assets are placed in either of the standard locations:
-- **Tracking Data**:
-  - `data/tactical/BAR-ATH_tactical_atd.txt` (and `.xml`)
-- **Match Video (`.mp4`)**:
-  - Place `BAR-ATH_broadcast.mp4` or `BAR-ATH_tactical.mp4` in the project root folder or inside `data/` or `data/tactical/`.
-  - *(Alternatively, you can click **"📂 Select Video"** in the web app to load any `.mp4` file from your computer with zero upload delay).*
+Data (see `DATA.md`):
+- Tracking: `data/tactical/BAR-ATH_tactical_atd.txt` and `.xml` (required)
+- Video: `BAR-ATH_broadcast.mp4` or `BAR-ATH_tactical.mp4` in the repo root, `data/`, or
+  `data/broadcast/` (optional; or use **Select Video** in the app)
 
-### 3. Launch the App
-- **Windows**: Double-click `run_labeler.bat`
-- **Mac / Linux**: Run `./run_labeler.sh` or:
-```bash
-python labeler/run_labeler.py
-```
-The studio will automatically:
-1. Index all 199,319 tracking frames in ~0.2 seconds.
-2. Boot the local server at `http://127.0.0.1:5000`.
-3. Open your default web browser and auto-align to First-Half Kickoff!
+Launch:
+- Windows: double-click `run_labeler.bat`
+- Mac / Linux: `./run_labeler.sh`, or `python labeler/run_labeler.py`
+
+The app opens at `http://127.0.0.1:5000`. `baseline_smooth50` is loaded on start so there is
+something to look at.
 
 ---
 
-## 📺 Broadcast Video Kickoff Synchronization (04:45.00)
+## Using it
 
-The tracking data and official ground truth are indexed to the **tactical camera** (frame 11,185 = kickoff). The **broadcast feed** (`BAR-ATH_broadcast.mp4`) starts recording earlier.
+1. **Load a model.** Click **Load model CSV** and pick a `frame,label` file (199,319 rows, labels
+   `H` `A` `D` `X`), or pick one from `evaluation/results/` in the dropdown. Load several to compare.
+   Files are checked with the official validator, and a bad file shows the reason.
+2. **Timeline (bottom).** One row for the ground truth, then one row per model with a thin red row
+   beneath it marking every frame where that model is wrong. Click to jump; zoom with 15m / 5m / Full.
+3. **Truth vs Predictions (sidebar).** At the current frame: the true label, each model's label, and
+   whether it is correct.
+4. **Model Analysis (sidebar).** Pick a model to see:
+   - spellF1, macroF1, accuracy, possession count and mean length versus the truth, per-class F1
+     (all from the official `possession_metrics.py`)
+   - **Where the errors are:** ball visible vs missing, near a handover (within 2 s of a real change
+     of possession) vs mid-possession
+   - **What it confuses:** e.g. "truth D, said H"
+   - **Longest wrong stretches:** click one to jump to it
+5. **Radar and video.** The radar shows both teams, the ball and its trail, and the nearest players.
+   With a video loaded it plays in sync with the radar.
 
-- **Pre-Configured Offset**: The app comes pre-calibrated with an offset of **`4060` frames** ($162.4$ seconds).
-- **Alignment Anchor**:
-  - Broadcast video timestamp **`04:45.00`** ($285.0$s) corresponds exactly to Tactical Tracking **`Frame 11,185`**.
-  - Broadcast video timestamp **`04:46.00`** ($286.0$s) corresponds exactly to Tactical Tracking **`Frame 11,210`** (ball rolled slightly into center circle).
-- **Fine-Tuning**: If needed, you can adjust the offset anytime using the `[-1f]` and `[+1f]` buttons or click `Sync KO (4:45)`.
-
----
-
-## 🌟 Key Features
-
-1. **Main Cinema Video View (68% stage)**:
-   - Clear view of player duels, ball touches, referee whistles, and stoppages.
-   - 25 fps hardware-accelerated playback synced to tracking data.
-2. **Tactical Radar Minimap (32% sidebar)**:
-   - Real-time 2D pitch radar showing FC Barcelona (Blaugrana navy + gold, slots 1–23) and Athletic Club (Crimson + white, slots 24–46).
-   - Dynamic velocity arrows and pulsing ball tracker with 12-frame trajectory trail.
-   - Live distance lines to nearest Home and Away players with proximity margin ($d_{away} - d_{home}$).
-   - Occlusion alert banner when the ball is missing (`NaN`) with centroid tracking fallback.
-3. **10x Range / Spell Labeling**:
-   - In football, possessions average ~14 seconds (350 frames). Labeling frame-by-frame is unnecessary:
-     1. Scrub to possession start $\to$ Press **`I`** (Mark In-point).
-     2. Scrub to possession end $\to$ Press **`O`** (Mark Out-point).
-     3. Press **`H`** (Home), **`A`** (Away), or **`D`** (Dead Ball).
-     - **350 frames labeled in 1 click!**
-4. **AI Pre-Annotation Assist**:
-   - Live machine learning heuristic calculates possession probabilities in real time.
-   - Press **`Enter`** to accept the AI suggestion for the active frame or marked range.
-5. **One-Click Export**:
-   - **`📄 Export CSV`**: Saves competition submission format (`frame,label`) to `data/annotated_possession_labels.csv`.
-   - **`🚀 Export ML Set`**: Compiles all labeled frames merged with the 31 collective features into `data/custom_training_dataset.csv`, ready to train PyTorch / LightGBM models!
+Press **E** / **Shift+E** to jump to the next / previous error of the analysed model.
 
 ---
 
-## ⌨️ Keyboard Shortcuts
+## Important limits
 
-| Key | Action | Description |
-| :--- | :--- | :--- |
-| **`Spacebar`** | **Play / Pause** | Toggles 25 fps synchronized Video + Radar playback |
-| **`←` / `→`** | **Step 1 Frame** | Precision frame-by-frame inspection |
-| **`Shift + ←` / `→`** | **Step 1 Second** | Jump 25 frames backward / forward |
-| **`Ctrl + ←` / `→`** | **Step 5 Seconds** | Jump 125 frames backward / forward |
-| **`H`** | **Label HOME** | Tag active frame or selection as Barcelona (`H`) |
-| **`A`** | **Label AWAY** | Tag active frame or selection as Athletic Club (`A`) |
-| **`D`** | **Label DEAD BALL** | Tag active frame or selection as Stoppage / Out of Play (`D`) |
-| **`X` / `Delete`** | **Clear Label** | Clear label for active frame or selection |
-| **`I` / `[`** | **Mark In-Point** | Sets start boundary for range labeling |
-| **`O` / `]`** | **Mark Out-Point** | Sets end boundary for range labeling |
-| **`R`** | **Reset Range** | Clears active In/Out selection |
-| **`Enter`** | **Accept AI** | Confirm AI suggestion for current frame/range |
+- **Ground truth only exists for frames 11,185-18,684** (the first 5 minutes, 17 possessions). Errors
+  can only be marked there. Elsewhere you still see the model's labels, but no verdict.
+- **Use it to diagnose, not to rank.** 17 possessions is too few to rank models; one possession moves
+  `spellF1` by about 6 points. A model trained on those same 5 minutes will look better here than
+  it really is.
+- **Video sync.** The tracking is indexed to the tactical camera; the broadcast video is offset
+  (default 4,013 frames, adjustable with the -1f / +1f buttons or Alt + arrow keys).
+
+---
+
+## Keyboard shortcuts
+
+| Key | Action |
+| :--- | :--- |
+| `Space` | Play / pause (video + radar) |
+| `Left` / `Right` | Step 1 frame |
+| `Shift` + `Left` / `Right` | Step 1 second |
+| `Ctrl` + `Left` / `Right` | Step 5 seconds |
+| `E` / `Shift+E` | Next / previous error of the analysed model |
+| `Alt` + `Left` / `Right` | Nudge video offset by 1 frame (`Shift` = 10) |
+
+---
+
+## Under the hood
+
+`labeler/app.py` serves the tracking frames and a small JSON API:
+
+| Endpoint | Purpose |
+| :--- | :--- |
+| `GET /api/frame/<n>` | Players, ball, ground-truth label and each model's label for frame `n` |
+| `GET /api/models`, `POST /api/models/load`, `POST /api/models/upload`, `POST /api/models/remove` | Manage loaded models |
+| `GET /api/ribbon` | Run-length encoded truth, models and error stretches for the timeline |
+| `GET /api/analysis?name=<model>` | Official metrics plus the error breakdown and wrong-stretch list |
+
+Which slots belong to which team is read from the ATD metadata XML (slots 1-24 are home, 25-46 away
+for this match), not hard-coded.

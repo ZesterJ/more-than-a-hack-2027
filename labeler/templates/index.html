@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Barca Vision Labeler -- Tactical & Video Annotation Studio</title>
+  <title>Barca Vision Analyzer -- Possession Model Debugger</title>
   <style>
     :root {
       --bg-dark: #0a0e14;
@@ -411,7 +411,7 @@
     }
     .ribbon-container {
       position: relative;
-      height: 30px;
+      min-height: 30px;
       background: #1a2230;
       border: 1px solid #2a374a;
       border-radius: 6px;
@@ -420,7 +420,6 @@
     }
     canvas#ribbonCanvas {
       width: 100%;
-      height: 100%;
       display: block;
     }
     .playhead-marker {
@@ -453,6 +452,34 @@
       font-weight: 700;
       margin-left: 3px;
     }
+
+    /* Model analyzer */
+    .chip { display: inline-block; min-width: 20px; text-align: center; padding: 1px 6px; border-radius: 4px; font-weight: 800; font-size: 0.78rem; }
+    .chip-H { background: rgba(37, 99, 235, 0.45); border: 1px solid #3b82f6; color: #bfdbfe; }
+    .chip-A { background: rgba(220, 38, 38, 0.45); border: 1px solid #ef4444; color: #fecaca; }
+    .chip-D { background: rgba(217, 119, 6, 0.45); border: 1px solid #f59e0b; color: #fde68a; }
+    .chip-X { background: rgba(55, 65, 81, 0.5); border: 1px dashed #4b5563; color: #9ca3af; }
+    .pred-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; margin-bottom: 5px; gap: 8px; }
+    .pred-name { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pred-note { color: #9ca3af; font-size: 0.72rem; }
+    .ok { color: #4ade80; font-size: 0.72rem; font-weight: 700; }
+    .wrong { color: #f87171; font-size: 0.72rem; font-weight: 800; }
+    .mini-select { background: #1e293b; color: white; border: 1px solid #334155; border-radius: 4px; font-size: 0.7rem; max-width: 170px; }
+    .analysis-body { font-size: 0.76rem; }
+    .analysis-body .note { color: #9ca3af; font-size: 0.7rem; margin-bottom: 6px; }
+    .sub-title { margin: 9px 0 4px; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.7px; color: var(--text-dim); font-weight: 700; }
+    .bar-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; font-size: 0.72rem; }
+    .bar-label { width: 118px; color: #cbd5e1; flex-shrink: 0; }
+    .bar-track { flex: 1; height: 7px; background: #0f172a; border-radius: 4px; overflow: hidden; }
+    .bar-fill { display: block; height: 100%; }
+    .bar-num { width: 92px; text-align: right; color: #9ca3af; flex-shrink: 0; }
+    .seg-list { max-height: 210px; overflow-y: auto; }
+    .seg-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 0.7rem; }
+    .seg-row:hover { background: #243044; }
+    .seg-tags { color: #9ca3af; margin-left: auto; }
+    .model-chip { display: inline-flex; align-items: center; gap: 4px; background: #1e293b; border: 1px solid #334155; border-radius: 5px; padding: 2px 6px; font-size: 0.72rem; margin-right: 4px; }
+    .model-chip button { background: none; border: none; color: #94a3b8; cursor: pointer; font-weight: 800; }
+    .model-chip button:hover { color: #f87171; }
   </style>
 </head>
 <body>
@@ -460,26 +487,20 @@
   <!-- Top Navigation Header -->
   <header>
     <div class="brand">
-      <h1>⚽ Barca Vision Labeler</h1>
-      <span class="badge">Tactical Video Studio</span>
+      <h1>⚽ Barca Vision Analyzer</h1>
+      <span class="badge">Model vs Ground Truth</span>
     </div>
 
     <div class="header-actions">
       <input type="file" id="videoFileInput" accept="video/mp4,video/*" style="display: none;">
+      <input type="file" id="modelFileInput" accept=".csv,text/csv" style="display: none;">
+      <span id="modelChips"></span>
+      <select id="selectAvailable" class="btn" style="display: none;"></select>
+      <button class="btn btn-primary" id="btnLoadModel" title="Load a model submission CSV (frame,label; 199,319 rows)">
+        📥 Load model CSV
+      </button>
       <button class="btn" id="btnSelectVideo" title="Choose another video file">
         📂 Select Video
-      </button>
-      <button class="btn" id="btnLoadGT" title="Load official 5-minute competition ground truth as gold standard">
-        📥 Load Ref GT
-      </button>
-      <button class="btn" id="btnAutoAI" title="Pre-populate selected range using AI Heuristic">
-        ⚡ AI Fill
-      </button>
-      <button class="btn btn-primary" id="btnExportCSV" title="Export complete match submission file (frame,label)">
-        📄 Export CSV
-      </button>
-      <button class="btn btn-success" id="btnExportTrain" title="Export labeled subset formatted directly for ML training">
-        🚀 Export ML Set
       </button>
     </div>
   </header>
@@ -535,40 +556,13 @@
         </div>
       </div>
 
-      <!-- Active Frame Possession Card -->
-      <div class="card">
-        <div class="card-title">Active Possession Label</div>
-        <div id="statusBadge" class="status-badge status-X">UNLABELED</div>
-        
-        <div class="label-actions">
-          <button class="btn-lbl btn-lbl-H" id="btnTagH">HOME <span class="hotkey-pill">H</span></button>
-          <button class="btn-lbl btn-lbl-A" id="btnTagA">AWAY <span class="hotkey-pill">A</span></button>
-          <button class="btn-lbl btn-lbl-D" id="btnTagD">DEAD <span class="hotkey-pill">D</span></button>
-          <button class="btn-lbl btn-lbl-clear" id="btnTagClear">Clear Label <span class="hotkey-pill">X / Del</span></button>
-        </div>
-      </div>
-
-      <!-- Range / Spell Labeling (Speed Mode) -->
+      <!-- Truth vs model predictions at the current frame -->
       <div class="card">
         <div class="card-title">
-          <span>Range / Spell Labeler</span>
-          <span style="font-size: 0.68rem; color: #60a5fa;">10x Workflow</span>
+          <span>Truth vs Predictions</span>
+          <span style="font-size: 0.65rem; color: #9ca3af;">truth: frames 11,185-18,684</span>
         </div>
-        <div class="range-box">
-          <div class="range-inputs">
-            <span>In: <b id="rangeInText">--</b> <span class="hotkey-pill">I</span></span>
-            <span>Out: <b id="rangeOutText">--</b> <span class="hotkey-pill">O</span></span>
-          </div>
-          <div style="font-size: 0.7rem; color: #9ca3af;" id="rangeDurationText">No active range marked</div>
-          <div style="display: flex; gap: 5px; margin-top: 2px;">
-            <button class="btn btn-primary" style="flex: 1; padding: 4px; font-size: 0.72rem;" id="btnApplyRange">
-              Apply to Range
-            </button>
-            <button class="btn" style="padding: 4px 7px;" id="btnClearRange" title="Clear In/Out">
-              ✕
-            </button>
-          </div>
-        </div>
+        <div id="predList"></div>
       </div>
 
       <!-- Live Physics Telemetry -->
@@ -601,35 +595,13 @@
         </div>
       </div>
 
-      <!-- AI Assistant Suggestion -->
+      <!-- Model analysis -->
       <div class="card">
-        <div class="card-title">AI Pre-Annotation Assist</div>
-        <div class="ai-box">
-          <div>
-            <div class="ai-pred" id="aiPredLabel">HOME (H)</div>
-            <div class="ai-conf" id="aiPredConf">Confidence: 85%</div>
-          </div>
-          <button class="btn btn-primary" style="padding: 4px 7px; font-size: 0.7rem;" id="btnAcceptAI">
-            Accept <span class="hotkey-pill">Enter</span>
-          </button>
+        <div class="card-title">
+          <span>Model Analysis</span>
+          <select id="selectAnalysis" class="mini-select"></select>
         </div>
-      </div>
-
-      <!-- Session Statistics -->
-      <div class="card">
-        <div class="card-title">Session Progress</div>
-        <div class="stat-row">
-          <span class="stat-label">Labeled Frames:</span>
-          <span class="stat-value" id="statTotalLabeled">0</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Class Ratio:</span>
-          <span class="stat-value" id="statClassRatio">0% / 0% / 0%</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Spells Count:</span>
-          <span class="stat-value" id="statSpellCount">0</span>
-        </div>
+        <div id="analysisBody" class="analysis-body">Load a model CSV (frame,label) to analyse it.</div>
       </div>
 
     </div>
@@ -677,7 +649,6 @@
     <div class="ribbon-container" id="ribbonBox">
       <canvas id="ribbonCanvas" width="1600" height="30"></canvas>
       <div class="playhead-marker" id="playheadMarker"></div>
-      <div class="selection-range-marker" id="selectionMarker" style="display: none;"></div>
     </div>
   </div>
 
@@ -690,15 +661,18 @@
     let playbackSpeed = 1.0;
     let playInterval = null;
 
-    let rangeIn = null;
-    let rangeOut = null;
 
     let windowStart = 11185;
-    let windowEnd = 11185 + 22500; // default 15 mins
+    let windowEnd = 11185 + 7500; // public ground truth covers the first 5 minutes of play
 
     let frameCache = new Map();
-    let spellsData = [];
     let ballHistory = [];
+
+    // Models & analysis
+    let modelNames = [];
+    let ribbonData = null;
+    let analysisName = null;
+    let analysisData = null;
 
     // Video Sync: default offset
     let videoLoaded = false;
@@ -711,7 +685,7 @@
     const ribbonCanvas = document.getElementById("ribbonCanvas");
     const ribbonCtx = ribbonCanvas.getContext("2d");
     const playheadMarker = document.getElementById("playheadMarker");
-    const selectionMarker = document.getElementById("selectionMarker");
+    const ribbonBox = document.getElementById("ribbonBox");
 
     const matchVideo = document.getElementById("matchVideo");
     const videoDropzone = document.getElementById("videoDropzone");
@@ -723,11 +697,9 @@
     // Init
     window.addEventListener("DOMContentLoaded", async () => {
       await fetchConfig();
-      await fetchOverview();
       setupVideoSync();
-      await loadFrame(currentFrame);
       setupEventListeners();
-      renderRibbon();
+      await refreshModels();
     });
 
     async function fetchConfig() {
@@ -746,16 +718,125 @@
       }
     }
 
-    async function fetchOverview() {
-      try {
-        const res = await fetch("/api/labels_overview");
-        const data = await res.json();
-        spellsData = data.spells || [];
-        updateStatsUI(data.stats);
-        renderRibbon();
-      } catch (err) {
-        console.error("Overview error:", err);
+    const LETTER_NAMES = { H: "Home", A: "Away", D: "Dead", X: "none" };
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    async function refreshModels(select) {
+      const res = await fetch("/api/models");
+      const data = await res.json();
+      modelNames = data.loaded;
+
+      const avail = document.getElementById("selectAvailable");
+      avail.innerHTML = '<option value="">+ Add from evaluation/results...</option>' +
+        data.available.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
+      avail.style.display = data.available.length ? "" : "none";
+
+      document.getElementById("modelChips").innerHTML = modelNames.map((n) =>
+        `<span class="model-chip">${esc(n)} <button data-remove="${esc(n)}" title="Remove">x</button></span>`).join("");
+
+      if (select) analysisName = select;
+      if (!modelNames.includes(analysisName)) analysisName = modelNames[0] || null;
+      document.getElementById("selectAnalysis").innerHTML = modelNames.map((n) =>
+        `<option value="${esc(n)}"${n === analysisName ? " selected" : ""}>${esc(n)}</option>`).join("");
+
+      frameCache.clear();
+      const rres = await fetch("/api/ribbon");
+      ribbonData = await rres.json();
+      renderRibbon();
+      await runAnalysis();
+      await loadFrame(currentFrame);
+    }
+
+    async function runAnalysis() {
+      const body = document.getElementById("analysisBody");
+      analysisData = null;
+      if (!analysisName) {
+        body.textContent = "Load a model CSV (frame,label) to analyse it.";
+        return;
       }
+      body.textContent = "Analysing...";
+      try {
+        const res = await fetch("/api/analysis?name=" + encodeURIComponent(analysisName));
+        const d = await res.json();
+        if (d.error) { body.textContent = d.error; return; }
+        analysisData = d;
+        renderAnalysis();
+      } catch (err) {
+        body.textContent = "Analysis failed: " + err;
+      }
+    }
+
+    function pct(n, d) { return d ? (100 * n / d).toFixed(0) + "%" : "-"; }
+
+    function renderAnalysis() {
+      const { metrics: m, breakdown: b, segments } = analysisData;
+      const f = (v) => v.toFixed(3);
+      const bar = (label, n, total, color) =>
+        `<div class="bar-row"><span class="bar-label">${label}</span>` +
+        `<span class="bar-track"><span class="bar-fill" style="width:${total ? 100 * n / total : 0}%; background:${color}"></span></span>` +
+        `<span class="bar-num">${n.toLocaleString()} fr (${pct(n, total)})</span></div>`;
+
+      const pairs = Object.entries(b.by_pair).sort((x, y) => y[1] - x[1]).map(([k, n]) => {
+        const [t, p] = k.split(">");
+        return bar(`Truth ${t}, said ${p}`, n, b.error_frames, "#ef4444");
+      }).join("");
+
+      const worst = segments.slice().sort((x, y) => y.frames - x.frames).slice(0, 25).map((s) => {
+        const tags = [s.handover ? "handover" : "mid-possession"];
+        if (s.ball_missing >= 0.5) tags.push("ball missing");
+        return `<div class="seg-row" data-jump="${Math.max(0, s.start - 25)}" title="Click to jump here">` +
+          `<span>${s.start.toLocaleString()} &rarr; ${s.end.toLocaleString()}</span>` +
+          `<span class="chip chip-${s.truth}">${s.truth}</span>&rarr;<span class="chip chip-${s.pred}">${s.pred}</span>` +
+          `<span>${s.seconds}s</span><span class="seg-tags">${tags.join(", ")}</span></div>`;
+      }).join("");
+
+      document.getElementById("analysisBody").innerHTML =
+        `<div class="note">Scored on the public 5 minutes only (${m.n_gt_spells} possessions). ` +
+        `Use it to see <i>why</i> a model fails, not to rank it.</div>` +
+        `<div class="stat-row"><span class="stat-label">spellF1 (ranking metric)</span><span class="stat-value">${f(m.spell_f1)}</span></div>` +
+        `<div class="stat-row"><span class="stat-label">macroF1</span><span class="stat-value">${f(m.macro_f1)}</span></div>` +
+        `<div class="stat-row"><span class="stat-label">Frame accuracy</span><span class="stat-value">${(100 * m.accuracy).toFixed(1)}%</span></div>` +
+        `<div class="stat-row"><span class="stat-label">Possessions (model / truth)</span><span class="stat-value">${m.n_pred_spells} / ${m.n_gt_spells}</span></div>` +
+        `<div class="stat-row"><span class="stat-label">Mean length (model / truth)</span><span class="stat-value">${m.mean_spell_s.toFixed(1)}s / ${m.gt_mean_spell_s.toFixed(1)}s</span></div>` +
+        `<div class="stat-row"><span class="stat-label">F1 Home / Away / Dead</span><span class="stat-value">${f(m.per_class.H.f1)} / ${f(m.per_class.A.f1)} / ${f(m.per_class.D.f1)}</span></div>` +
+        `<div class="sub-title">Where the errors are (${b.error_frames.toLocaleString()} of ${b.graded_frames.toLocaleString()} frames wrong)</div>` +
+        bar("Ball visible", b.ball_visible, b.error_frames, "#38bdf8") +
+        bar("Ball missing", b.ball_missing, b.error_frames, "#f59e0b") +
+        bar("Near a handover (+/-2s)", b.handover, b.error_frames, "#a78bfa") +
+        bar("Mid-possession", b.mid_possession, b.error_frames, "#34d399") +
+        `<div class="sub-title">What it confuses</div>${pairs}` +
+        `<div class="sub-title">Longest wrong stretches (click to jump, E = next error)</div>` +
+        `<div class="seg-list">${worst || "No errors on the graded frames."}</div>`;
+    }
+
+    function jumpToError(dir) {
+      if (!analysisData || !analysisData.segments.length) return;
+      const segs = analysisData.segments.slice().sort((a, b) => a.start - b.start);
+      let target = null;
+      if (dir > 0) target = segs.find((s) => s.start > currentFrame + 25) || segs[0];
+      else {
+        for (const s of segs) if (s.start < currentFrame - 25) target = s;
+        target = target || segs[segs.length - 1];
+      }
+      loadFrame(Math.max(0, target.start - 25));
+    }
+
+    function renderPredictions(fd) {
+      const gt = fd.gt_label;
+      const chip = (l) => `<span class="chip chip-${l}">${l === "X" ? "-" : l}</span> <span class="pred-note">${LETTER_NAMES[l]}</span>`;
+      let html = `<div class="pred-row"><span class="pred-name">Ground truth</span><span>${gt === "X" ? '<span class="pred-note">no truth for this frame</span>' : chip(gt)}</span></div>`;
+      for (const name of modelNames) {
+        const p = fd.preds[name];
+        if (p === undefined) continue;
+        let verdict = "";
+        if (gt !== "X") verdict = p === gt ? '<span class="ok">correct</span>' : '<span class="wrong">WRONG</span>';
+        html += `<div class="pred-row"><span class="pred-name">${esc(name)}</span><span>${chip(p)} ${verdict}</span></div>`;
+      }
+      if (!modelNames.length) html += '<div class="pred-note">No model loaded.</div>';
+      document.getElementById("predList").innerHTML = html;
     }
 
     // Load Single Frame
@@ -819,14 +900,7 @@
       document.getElementById("txtClock").textContent = fd.timestamp;
       document.getElementById("txtFrameCounter").textContent = `Frame: ${fd.video_frame.toLocaleString()} / ${totalFrames.toLocaleString()}`;
 
-      // Status Badge
-      const sb = document.getElementById("statusBadge");
-      const lbl = fd.label;
-      sb.className = "status-badge status-" + (lbl || "X");
-      if (lbl === "H") sb.textContent = "HOME (BARCELONA)";
-      else if (lbl === "A") sb.textContent = "AWAY (ATHLETIC)";
-      else if (lbl === "D") sb.textContent = "DEAD BALL (STOPPAGE)";
-      else sb.textContent = "UNLABELED (X)";
+      renderPredictions(fd);
 
       // Telemetry
       const telem = fd.telemetry;
@@ -868,49 +942,6 @@
 
       document.getElementById("valTeamSpeeds").textContent = `${telem.home_speed} / ${telem.away_speed} m/s`;
 
-      // AI Suggestion
-      if (telem.ai_suggestion) {
-        const ai = telem.ai_suggestion;
-        const nameMap = { "H": "HOME (Barca)", "A": "AWAY (Athletic)", "D": "DEAD BALL" };
-        document.getElementById("aiPredLabel").textContent = nameMap[ai.label] || ai.label;
-        document.getElementById("aiPredConf").textContent = `Confidence: ${(ai.confidence * 100).toFixed(0)}%`;
-      }
-
-      updateRangeUI();
-    }
-
-    function updateRangeUI() {
-      const inEl = document.getElementById("rangeInText");
-      const outEl = document.getElementById("rangeOutText");
-      const durEl = document.getElementById("rangeDurationText");
-
-      if (rangeIn !== null) inEl.textContent = rangeIn.toLocaleString();
-      else inEl.textContent = "--";
-
-      if (rangeOut !== null) outEl.textContent = rangeOut.toLocaleString();
-      else outEl.textContent = "--";
-
-      if (rangeIn !== null && rangeOut !== null) {
-        const span = Math.abs(rangeOut - rangeIn) + 1;
-        const sec = (span / fps).toFixed(2);
-        durEl.textContent = `Selection: ${span} frames (${sec}s)`;
-      } else {
-        durEl.textContent = "No active range marked";
-      }
-
-      updateSelectionMarker();
-    }
-
-    function updateStatsUI(stats) {
-      if (!stats) return;
-      document.getElementById("statTotalLabeled").textContent = `${stats.total.toLocaleString()} frames`;
-      if (stats.total > 0) {
-        const ph = ((stats.H / stats.total) * 100).toFixed(0);
-        const pa = ((stats.A / stats.total) * 100).toFixed(0);
-        const pd = ((stats.D / stats.total) * 100).toFixed(0);
-        document.getElementById("statClassRatio").textContent = `H: ${ph}% | A: ${pa}% | D: ${pd}%`;
-      }
-      document.getElementById("statSpellCount").textContent = `${stats.spells_count} spells`;
     }
 
     // DRAW TACTICAL PITCH RADAR
@@ -1094,30 +1125,56 @@
       }
     }
 
-    // MULTI-TRACK TIMELINE RIBBON
+    // MULTI-TRACK TIMELINE RIBBON: ground truth, then each model with its error row beneath
+    const ROW_H = 16, ERR_H = 7, ROW_GAP = 3;
+    const RUN_COLORS = { 0: "#2563eb", 1: "#dc2626", 2: "#d97706" };
+
+    function drawRuns(runs, y, h, span, rw, colorFor) {
+      for (const [s, e, c] of runs) {
+        if (e < windowStart || s > windowEnd) continue;
+        const color = colorFor(c);
+        if (!color) continue;
+        const x1 = Math.max(0, (s - windowStart) / span * rw);
+        const x2 = Math.min(rw, (e + 1 - windowStart) / span * rw);
+        ribbonCtx.fillStyle = color;
+        ribbonCtx.fillRect(x1, y, Math.max(1, x2 - x1), h);
+      }
+    }
+
+    function ribbonLabel(text, y, h) {
+      ribbonCtx.font = "10px sans-serif";
+      ribbonCtx.textBaseline = "middle";
+      ribbonCtx.fillStyle = "rgba(0,0,0,0.55)";
+      ribbonCtx.fillText(text, 5, y + h / 2 + 1);
+      ribbonCtx.fillStyle = "#ffffff";
+      ribbonCtx.fillText(text, 4, y + h / 2);
+    }
+
     function renderRibbon() {
+      const rows = 1 + modelNames.length;
+      const totalH = rows * (ROW_H + ROW_GAP) + modelNames.length * (ERR_H + ROW_GAP) + 2;
+      ribbonBox.style.height = totalH + "px";
+      ribbonCanvas.width = Math.max(300, ribbonBox.clientWidth);
+      ribbonCanvas.height = totalH;
       const rw = ribbonCanvas.width;
-      const rh = ribbonCanvas.height;
 
       ribbonCtx.fillStyle = "#141c26";
-      ribbonCtx.fillRect(0, 0, rw, rh);
+      ribbonCtx.fillRect(0, 0, rw, totalH);
 
       const span = windowEnd - windowStart;
-      if (span <= 0) return;
+      if (span <= 0 || !ribbonData) return;
 
-      for (let sp of spellsData) {
-        if (sp.end < windowStart || sp.start > windowEnd) continue;
+      let y = 2;
+      drawRuns(ribbonData.gt, y, ROW_H, span, rw, (c) => RUN_COLORS[c]);
+      ribbonLabel("Ground truth", y, ROW_H);
+      y += ROW_H + ROW_GAP;
 
-        const x1 = Math.max(0, (sp.start - windowStart) / span * rw);
-        const x2 = Math.min(rw, (sp.end - windowStart) / span * rw);
-        const width = Math.max(1, x2 - x1);
-
-        if (sp.label === "H") ribbonCtx.fillStyle = "#2563eb";
-        else if (sp.label === "A") ribbonCtx.fillStyle = "#dc2626";
-        else if (sp.label === "D") ribbonCtx.fillStyle = "#d97706";
-        else ribbonCtx.fillStyle = "#4b5563";
-
-        ribbonCtx.fillRect(x1, 2, width, rh - 4);
+      for (const name of modelNames) {
+        drawRuns(ribbonData.models[name] || [], y, ROW_H, span, rw, (c) => RUN_COLORS[c] || "#4b5563");
+        ribbonLabel(name + (name === analysisName ? "  (analysed)" : ""), y, ROW_H);
+        y += ROW_H + ROW_GAP;
+        drawRuns(ribbonData.errors[name] || [], y, ERR_H, span, rw, () => "#ff2d2d");
+        y += ERR_H + ROW_GAP;
       }
     }
 
@@ -1125,23 +1182,6 @@
       const span = windowEnd - windowStart;
       const pct = Math.max(0, Math.min(1, (currentFrame - windowStart) / span));
       playheadMarker.style.left = `${pct * 100}%`;
-    }
-
-    function updateSelectionMarker() {
-      if (rangeIn === null || rangeOut === null) {
-        selectionMarker.style.display = "none";
-        return;
-      }
-      const span = windowEnd - windowStart;
-      const startF = Math.min(rangeIn, rangeOut);
-      const endF = Math.max(rangeIn, rangeOut);
-
-      const p1 = Math.max(0, Math.min(1, (startF - windowStart) / span));
-      const p2 = Math.max(0, Math.min(1, (endF - windowStart) / span));
-
-      selectionMarker.style.display = "block";
-      selectionMarker.style.left = `${p1 * 100}%`;
-      selectionMarker.style.width = `${(p2 - p1) * 100}%`;
     }
 
     // VIDEO SYNC LOGIC
@@ -1248,36 +1288,6 @@
       });
     }
 
-    // LABELING ACTIONS
-    async function tagCurrent(label) {
-      if (rangeIn !== null && rangeOut !== null) {
-        await tagRange(rangeIn, rangeOut, label);
-      } else {
-        try {
-          const res = await fetch("/api/label", {
-            method: "POST",
-            body: JSON.stringify({ frame: currentFrame, label: label })
-          });
-          const fd = frameCache.get(currentFrame);
-          if (fd) fd.label = label;
-          updateUI(fd);
-          fetchOverview();
-        } catch (e) {}
-      }
-    }
-
-    async function tagRange(start, end, label) {
-      try {
-        const res = await fetch("/api/label_range", {
-          method: "POST",
-          body: JSON.stringify({ start, end, label })
-        });
-        frameCache.clear();
-        await loadFrame(currentFrame);
-        await fetchOverview();
-      } catch (e) {}
-    }
-
     // High-performance 60fps video-radar sync loop
     function syncVideoFrameLoop() {
       if (isPlaying && videoLoaded) {
@@ -1332,72 +1342,50 @@
         if (isPlaying && !videoLoaded) { togglePlay(); togglePlay(); }
       });
 
-      // Tags
-      document.getElementById("btnTagH").addEventListener("click", () => tagCurrent("H"));
-      document.getElementById("btnTagA").addEventListener("click", () => tagCurrent("A"));
-      document.getElementById("btnTagD").addEventListener("click", () => tagCurrent("D"));
-      document.getElementById("btnTagClear").addEventListener("click", () => tagCurrent(null));
-
-      // Range
-      document.getElementById("btnClearRange").addEventListener("click", () => {
-        rangeIn = null;
-        rangeOut = null;
-        updateRangeUI();
+      // Model loading & analysis
+      const modelFileInput = document.getElementById("modelFileInput");
+      document.getElementById("btnLoadModel").addEventListener("click", () => modelFileInput.click());
+      modelFileInput.addEventListener("change", async (e) => {
+        const file = e.target.files[0];
+        e.target.value = "";
+        if (!file) return;
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/models/upload", { method: "POST", body: fd });
+        const d = await res.json();
+        if (d.error) { alert(d.error); return; }
+        await refreshModels(d.name);
       });
-
-      document.getElementById("btnApplyRange").addEventListener("click", () => {
-        const activeLbl = frameCache.get(currentFrame)?.label || "H";
-        if (rangeIn !== null && rangeOut !== null) {
-          tagRange(rangeIn, rangeOut, activeLbl);
-        }
-      });
-
-      document.getElementById("btnAcceptAI").addEventListener("click", () => {
-        const fd = frameCache.get(currentFrame);
-        if (fd && fd.telemetry && fd.telemetry.ai_suggestion) {
-          tagCurrent(fd.telemetry.ai_suggestion.label);
-        }
-      });
-
-      // Header tools
-      document.getElementById("btnLoadGT").addEventListener("click", async () => {
-        if (confirm("Load official 5-minute competition ground truth into session?")) {
-          const res = await fetch("/api/load_reference_gt", { method: "POST" });
-          const data = await res.json();
-          alert(`Successfully imported ${data.loaded_count} reference frames!`);
-          frameCache.clear();
-          loadFrame(currentFrame);
-          fetchOverview();
-        }
-      });
-
-      document.getElementById("btnAutoAI").addEventListener("click", async () => {
-        if (rangeIn === null || rangeOut === null) {
-          alert("Please mark an In (I) and Out (O) range first!");
-          return;
-        }
-        const res = await fetch("/api/ai_fill_range", {
+      document.getElementById("selectAvailable").addEventListener("change", async (e) => {
+        const file = e.target.value;
+        if (!file) return;
+        const res = await fetch("/api/models/load", {
           method: "POST",
-          body: JSON.stringify({ start: rangeIn, end: rangeOut })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file })
         });
         const d = await res.json();
-        alert(`AI Heuristic labeled ${d.filled_count} frames!`);
-        frameCache.clear();
-        loadFrame(currentFrame);
-        fetchOverview();
+        if (d.error) { alert(d.error); await refreshModels(); return; }
+        await refreshModels(d.name);
       });
-
-      document.getElementById("btnExportCSV").addEventListener("click", async () => {
-        const res = await fetch("/api/export_csv", { method: "POST" });
-        const d = await res.json();
-        alert(`Saved ${d.labeled_count} labels to ${d.export_path}`);
+      document.getElementById("selectAnalysis").addEventListener("change", (e) => {
+        analysisName = e.target.value;
+        runAnalysis();
+        renderRibbon();
       });
-
-      document.getElementById("btnExportTrain").addEventListener("click", async () => {
-        const res = await fetch("/api/export_training_set", { method: "POST" });
-        const d = await res.json();
-        if (d.error) alert(d.error);
-        else alert(`Exported ${d.labeled_count} rows! Merged features: ${d.merged_features_count}`);
+      document.getElementById("analysisBody").addEventListener("click", (e) => {
+        const row = e.target.closest("[data-jump]");
+        if (row) loadFrame(parseInt(row.dataset.jump));
+      });
+      document.getElementById("modelChips").addEventListener("click", async (e) => {
+        const btn = e.target.closest("[data-remove]");
+        if (!btn) return;
+        await fetch("/api/models/remove", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: btn.dataset.remove })
+        });
+        await refreshModels();
       });
 
       // Jump controls
@@ -1427,20 +1415,14 @@
 
       document.getElementById("btnHelp").addEventListener("click", () => {
         alert(
-          "🎮 Barca Vision Labeler -- Keyboard Shortcuts Cheat Sheet:\n\n" +
-          "• Spacebar: Play / Pause (synchronous Video + Tactical Radar)\n" +
+          "Barca Vision Model Analyzer -- Keyboard Shortcuts:\n\n" +
+          "• Spacebar: Play / Pause (video + radar)\n" +
           "• Left / Right Arrow: Step 1 frame backward / forward\n" +
           "• Shift + Left / Right: Step 1 second (25 frames)\n" +
           "• Ctrl + Left / Right: Step 5 seconds (125 frames)\n" +
-          "• H: Label active frame / range as HOME (Barcelona)\n" +
-          "• A: Label active frame / range as AWAY (Athletic)\n" +
-          "• D: Label active frame / range as DEAD BALL (Stoppage)\n" +
-          "• X / Delete: Clear label for active frame / range\n" +
-          "• I or [: Mark In-point for range selection\n" +
-          "• O or ]: Mark Out-point for range selection\n" +
-          "• R: Reset / clear In-Out selection\n" +
-          "• Enter: Accept AI Pre-Annotation suggestion\n\n" +
-          "⚡ Kickoff Sync: Broadcast 04:45 corresponds to Tactical Frame 11,185 (Offset: 4,060)."
+          "• E / Shift+E: Jump to next / previous error of the analysed model\n" +
+          "• Alt + Left / Right: Nudge video offset by 1 frame (+Shift = 10)\n\n" +
+          "Ground truth only exists for the first 5 minutes (frames 11,185-18,684)."
         );
       });
 
@@ -1450,21 +1432,18 @@
         windowEnd = 11185 + 22500;
         renderRibbon();
         updateTimelinePlayhead();
-        updateSelectionMarker();
       });
       document.getElementById("btnZoom5m").addEventListener("click", () => {
         windowStart = 11185;
         windowEnd = 11185 + 7500;
         renderRibbon();
         updateTimelinePlayhead();
-        updateSelectionMarker();
       });
       document.getElementById("btnZoomFull").addEventListener("click", () => {
         windowStart = 0;
         windowEnd = totalFrames;
         renderRibbon();
         updateTimelinePlayhead();
-        updateSelectionMarker();
       });
 
       // Scrubber Clicking
@@ -1504,29 +1483,8 @@
           if (e.shiftKey) loadFrame(currentFrame + fps);
           else if (e.ctrlKey) loadFrame(currentFrame + fps * 5);
           else loadFrame(currentFrame + 1);
-        } else if (e.key === "h" || e.key === "H") {
-          tagCurrent("H");
-        } else if (e.key === "a" || e.key === "A") {
-          tagCurrent("A");
-        } else if (e.key === "d" || e.key === "D") {
-          tagCurrent("D");
-        } else if (e.key === "x" || e.key === "X" || e.code === "Delete") {
-          tagCurrent(null);
-        } else if (e.key === "i" || e.key === "I" || e.key === "[") {
-          rangeIn = currentFrame;
-          updateRangeUI();
-        } else if (e.key === "o" || e.key === "O" || e.key === "]") {
-          rangeOut = currentFrame;
-          updateRangeUI();
-        } else if (e.key === "r" || e.key === "R") {
-          rangeIn = null;
-          rangeOut = null;
-          updateRangeUI();
-        } else if (e.code === "Enter") {
-          const fd = frameCache.get(currentFrame);
-          if (fd && fd.telemetry && fd.telemetry.ai_suggestion) {
-            tagCurrent(fd.telemetry.ai_suggestion.label);
-          }
+        } else if (e.key === "e" || e.key === "E") {
+          jumpToError(e.shiftKey ? -1 : 1);
         }
       });
     }

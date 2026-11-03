@@ -1,8 +1,8 @@
-# ⚽ Barca Vision Labeler -- Quickstart & User Guide
+# ⚽ Barca Vision Analyzer -- Quickstart & User Guide
 
-Welcome to **Barca Vision Labeler**! This is a tactical video and tracking annotation studio designed for the **More Than A Hack 2027** ball possession challenge (FC Barcelona vs Athletic Club).
+Welcome to **Barca Vision Analyzer**! This is a tool for inspecting possession models against the ground truth, built for the **More Than A Hack 2027** ball possession challenge (FC Barcelona vs Athletic Club).
 
-It provides a synchronized dual-view experience: the **official match broadcast video** runs in lockstep with a **2D tactical radar minimap** at 25 fps, allowing you to quickly label possession spells and export machine-learning-ready datasets.
+It provides a synchronized dual-view experience: the **official match broadcast video** runs in lockstep with a **2D tactical radar minimap** at 25 fps, and it overlays your model's predictions on the ground truth so you can see where the model goes wrong.
 
 ---
 
@@ -39,7 +39,7 @@ more-than-a-hack-2027/
    ```bash
    pip install -r labeler/requirements.txt
    ```
-3. Launch the studio:
+3. Launch the app:
    ```bash
    chmod +x run_labeler.sh
    ./run_labeler.sh
@@ -68,32 +68,25 @@ more-than-a-hack-2027/
 
 ---
 
-## 🎮 4. How to Use the Studio & Label Data
+## 🎮 4. How to Use the Analyzer
 
 ### A. Playback & Scrubbing
 - **Spacebar**: Play / Pause both the broadcast video and the 2D pitch radar in exact 25 fps synchronization.
 - **`←` / `→`**: Step single frames backward / forward.
 - **`Shift + ←` / `→`**: Jump 1 second (25 frames).
-- **Timeline Scrubber**: Click anywhere on the bottom possession ribbon to jump directly to that match moment.
+- **Timeline**: Click anywhere on the bottom timeline to jump directly to that match moment.
 
-### B. Fast 10x Spell / Range Labeling
-In football, possessions average ~14 seconds (350 frames). Labeling frame-by-frame is tedious. Use the video-editor range workflow:
-1. Scrub to where possession begins $\to$ Press **`I`** (Mark In-point).
-2. Scrub to where possession ends $\to$ Press **`O`** (Mark Out-point).
-3. Press **`H`** (Home / Barcelona), **`A`** (Away / Athletic), or **`D`** (Dead Ball / Stoppage).
-- All 350+ frames are tagged in a single click with clean continuous boundaries!
+### B. Load a Model and Compare It to the Ground Truth
+1. Click **`📥 Load model CSV`** and choose a `frame,label` submission file (199,319 rows), or pick one of the files in `evaluation/results/` from the dropdown. Load several to compare them.
+2. The timeline shows the ground truth, then each model, with a thin red row under each model marking where it is wrong.
+3. The **Truth vs Predictions** card shows the true label and each model's label at the current frame.
+4. The **Model Analysis** card shows the official metrics, where the errors fall (ball missing vs visible, near a handover vs mid-possession), what the model confuses, and a clickable list of its longest wrong stretches. Press **`E`** / **`Shift + E`** to jump to the next / previous error.
 
-### C. AI Pre-Annotation Assist
-- The studio computes real-time ball proximity and player velocity decay on the fly.
-- Press **`Enter`** to accept the AI suggestion for the active frame or marked range.
-
-### D. Exporting Your Work
-- **`📄 Export CSV`**: Exports the official 199,319-row competition submission file (`data/annotated_possession_labels.csv`).
-- **`🚀 Export ML Set`**: Compiles all labeled frames and automatically merges them with the 31 engineered tactical features (`data/custom_training_dataset.csv`), ready to feed directly into machine learning models (`train_cnn_architectures.py`).
+> The ground truth only covers the first 5 minutes (frames 11,185-18,684). Use the Analyzer to understand *why* a model fails, not to rank models.
 
 ---
 
-## ⌨️ Complete Keyboard Shortcuts Cheat Sheet
+## ⌨️ Keyboard Shortcuts
 
 | Key | Action | Description |
 | :--- | :--- | :--- |
@@ -101,13 +94,6 @@ In football, possessions average ~14 seconds (350 frames). Labeling frame-by-fra
 | **`←` / `→`** | **Step 1 Frame** | Precision single-frame stepping |
 | **`Shift + ←` / `→`** | **Step 1 Second** | Jump 25 frames backward / forward |
 | **`Ctrl + ←` / `→`** | **Step 5 Seconds** | Jump 125 frames backward / forward |
-| **`H`** | **Label HOME** | Tag active frame or selection as Barcelona (`H`) |
-| **`A`** | **Label AWAY** | Tag active frame or selection as Athletic Club (`A`) |
-| **`D`** | **Label DEAD BALL** | Tag active frame or selection as Dead Ball / Stoppage (`D`) |
-| **`X` / `Delete`** | **Clear Label** | Clear label for active frame or selection |
-| **`I` / `[`** | **Mark In-Point** | Set start boundary for range labeling |
-| **`O` / `]`** | **Mark Out-Point** | Set end boundary for range labeling |
-| **`R`** | **Reset Range** | Clear active In/Out selection |
-| **`Enter`** | **Accept AI** | Confirm AI pre-annotation suggestion |
-| **`Alt + ←` / `→`** | **Nudge Video Sync** | Micro-adjust video alignment by $\pm 1$ frame |
-| **`Shift + Alt + ←` / `→`** | **Nudge Video Sync 10f** | Micro-adjust video alignment by $\pm 10$ frames |
+| **`E` / `Shift + E`** | **Next / previous error** | Jump to the analysed model's next / previous wrong stretch |
+| **`Alt + ←` / `→`** | **Nudge Video Sync** | Micro-adjust video alignment by ±1 frame |
+| **`Shift + Alt + ←` / `→`** | **Nudge Video Sync 10f** | Micro-adjust video alignment by ±10 frames |
