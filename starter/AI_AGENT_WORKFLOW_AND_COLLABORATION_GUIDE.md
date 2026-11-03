@@ -17,7 +17,7 @@ cd repo
 python starter/evaluate_champion.py
 ```
 
-### B. Generate & Validate the Official Full-Match Submission (199,319 rows in ~100s):
+### B. Generate & Validate the Official Full-Match Submission (199,319 rows in ~49s):
 ```bash
 cd repo
 python starter/generate_full_submission.py
@@ -27,6 +27,13 @@ python starter/generate_full_submission.py
 ```bash
 cd repo
 python evaluation/run_evaluation.py
+```
+
+### D. Retrain the 5-Fold Ensemble from Scratch (Full Reproducibility):
+```bash
+cd repo
+python starter/train_champion_models.py
+# Or run with flag: python starter/generate_full_submission.py --retrain
 ```
 
 ---

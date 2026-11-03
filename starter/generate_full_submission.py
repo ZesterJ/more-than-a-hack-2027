@@ -397,54 +397,82 @@ def main():
     inv_map = {0: 'H', 1: 'A', 2: 'D'}
     y_true_barca = np.array([label_map[x] for x in df_barca['label']], dtype=np.int64)
 
-    # 3. Train 5-Fold Cross-Validation Models (Strict Out-of-Fold Integrity)
-    print("\n[Stage 3] Training 5-Fold Cross-Validation Models (Zero Leakage, Fully Reproducible)...")
+    # 3. Train or Load 5-Fold Cross-Validation Models (Strict Out-of-Fold Integrity)
+    print("\n[Stage 3] Loading / Training 5-Fold Cross-Validation Models (Zero Leakage, Fully Reproducible)...")
     fold_size = 1500
     n_folds = 5
     models = []
     oof_preds = np.zeros(len(df_barca), dtype=int)
 
-    for fold in range(n_folds):
-        t0 = time.time()
-        val_start = fold * fold_size
-        val_end = (fold + 1) * fold_size
+    models_dir = 'models/champion_ensemble'
+    saved_models_exist = all(os.path.exists(os.path.join(models_dir, f'fold_{f}.txt')) for f in range(n_folds))
 
-        val_df = df_barca.iloc[val_start:val_end].copy().reset_index(drop=True)
-        val_y = y_true_barca[val_start:val_end]
+    if saved_models_exist and '--retrain' not in sys.argv:
+        print(f"  Loading pre-trained audited models from {models_dir}/ (instant out-of-fold inference)...")
+        for fold in range(n_folds):
+            val_start = fold * fold_size
+            val_end = (fold + 1) * fold_size
 
-        train_mask = np.ones(len(df_barca), dtype=bool)
-        train_mask[val_start:val_end] = False
-        train_barca = df_barca[train_mask].copy()
+            val_df = df_barca.iloc[val_start:val_end].copy().reset_index(drop=True)
+            val_y = y_true_barca[val_start:val_end]
 
-        dfs_to_concat = [df_met[feature_cols + ['label']]]
-        weights_list = [np.ones(len(df_met)) * 1.0]
+            model_file = os.path.join(models_dir, f'fold_{fold}.txt')
+            booster = lgb.Booster(model_file=model_file)
+            models.append(booster)
 
-        if df_idsse is not None:
-            dfs_to_concat.append(df_idsse[feature_cols + ['label']])
-            weights_list.append(np.ones(len(df_idsse)) * 0.5)
+            p_ml_val = booster.predict(val_df[feature_cols])
+            p_cal_val = calibrate_physics(val_df, p_ml_val)
+            v_raw_val = viterbi_decode(p_cal_val, trans_matrix, trans_scale=0.10)
+            v_filt_val = apply_duration_filter(v_raw_val, min_live_len=45, min_dead_len=65)
 
-        dfs_to_concat.append(train_barca[feature_cols + ['label']])
-        weights_list.append(np.ones(len(train_barca)) * 30.0)
+            oof_preds[val_start:val_end] = v_filt_val
+            acc_fold = (val_y == v_filt_val).mean()
+            print(f"  Fold {fold+1}/{n_folds} ({val_start:4d}..{val_end:4d}): Validation Frame Acc = {acc_fold:.2%}")
+    else:
+        print(f"  Training 5 folds live in memory (pass --retrain to force)...")
+        os.makedirs(models_dir, exist_ok=True)
+        for fold in range(n_folds):
+            t0 = time.time()
+            val_start = fold * fold_size
+            val_end = (fold + 1) * fold_size
 
-        joint_df = pd.concat(dfs_to_concat, ignore_index=True)
-        sample_weights = np.concatenate(weights_list)
+            val_df = df_barca.iloc[val_start:val_end].copy().reset_index(drop=True)
+            val_y = y_true_barca[val_start:val_end]
 
-        X_train = joint_df[feature_cols].copy()
-        y_train = np.array([label_map[x] for x in joint_df['label']], dtype=np.int64)
-        X_val = val_df[feature_cols].copy()
+            train_mask = np.ones(len(df_barca), dtype=bool)
+            train_mask[val_start:val_end] = False
+            train_barca = df_barca[train_mask].copy()
 
-        clf = lgb.LGBMClassifier(n_estimators=300, learning_rate=0.04, num_leaves=38, random_state=42 + fold, verbosity=-1)
-        clf.fit(X_train, y_train, sample_weight=sample_weights)
-        models.append(clf)
+            dfs_to_concat = [df_met[feature_cols + ['label']]]
+            weights_list = [np.ones(len(df_met)) * 1.0]
 
-        p_ml_val = clf.predict_proba(X_val)
-        p_cal_val = calibrate_physics(val_df, p_ml_val)
-        v_raw_val = viterbi_decode(p_cal_val, trans_matrix, trans_scale=0.10)
-        v_filt_val = apply_duration_filter(v_raw_val, min_live_len=45, min_dead_len=65)
+            if df_idsse is not None:
+                dfs_to_concat.append(df_idsse[feature_cols + ['label']])
+                weights_list.append(np.ones(len(df_idsse)) * 0.5)
 
-        oof_preds[val_start:val_end] = v_filt_val
-        acc_fold = (val_y == v_filt_val).mean()
-        print(f"  Fold {fold+1}/{n_folds} complete in {time.time()-t0:.1f}s (Validation Frame Acc: {acc_fold:.2%})")
+            dfs_to_concat.append(train_barca[feature_cols + ['label']])
+            weights_list.append(np.ones(len(train_barca)) * 30.0)
+
+            joint_df = pd.concat(dfs_to_concat, ignore_index=True)
+            sample_weights = np.concatenate(weights_list)
+
+            X_train = joint_df[feature_cols].copy()
+            y_train = np.array([label_map[x] for x in joint_df['label']], dtype=np.int64)
+            X_val = val_df[feature_cols].copy()
+
+            clf = lgb.LGBMClassifier(n_estimators=300, learning_rate=0.04, num_leaves=38, random_state=42 + fold, verbosity=-1)
+            clf.fit(X_train, y_train, sample_weight=sample_weights)
+            clf.booster_.save_model(os.path.join(models_dir, f'fold_{fold}.txt'))
+            models.append(clf.booster_)
+
+            p_ml_val = clf.predict_proba(X_val)
+            p_cal_val = calibrate_physics(val_df, p_ml_val)
+            v_raw_val = viterbi_decode(p_cal_val, trans_matrix, trans_scale=0.10)
+            v_filt_val = apply_duration_filter(v_raw_val, min_live_len=45, min_dead_len=65)
+
+            oof_preds[val_start:val_end] = v_filt_val
+            acc_fold = (val_y == v_filt_val).mean()
+            print(f"  Fold {fold+1}/{n_folds} complete in {time.time()-t0:.1f}s (Validation Frame Acc: {acc_fold:.2%})")
 
     overall_oof_acc = (y_true_barca == oof_preds).mean()
     print(f"\n  Overall Out-of-Fold Uncheated Frame Accuracy on Public Window: {overall_oof_acc:.2%}")
@@ -475,7 +503,8 @@ def main():
     unseen_h1_df = df_h1.iloc[len(oof_preds):].copy().reset_index(drop=True)
     if len(unseen_h1_df) > 0:
         print(f"  Inferring unseen Half 1 frames ({len(unseen_h1_df):,} frames) with 5-Fold Ensemble...")
-        p_ens_unseen_h1 = np.mean([clf.predict_proba(unseen_h1_df[feature_cols]) for clf in models], axis=0)
+        predict_fn = lambda m, x: m.predict(x) if isinstance(m, lgb.Booster) else m.predict_proba(x)
+        p_ens_unseen_h1 = np.mean([predict_fn(m, unseen_h1_df[feature_cols]) for m in models], axis=0)
         p_cal_unseen_h1 = calibrate_physics(unseen_h1_df, p_ens_unseen_h1)
         v_raw_unseen_h1 = viterbi_decode(p_cal_unseen_h1, trans_matrix, trans_scale=0.10)
         v_filt_unseen_h1 = apply_duration_filter(v_raw_unseen_h1, min_live_len=45, min_dead_len=65)
@@ -489,7 +518,8 @@ def main():
     print(f"  Extracted Half 2 in {time.time()-t0:.1f}s ({len(df_h2):,} rows).")
 
     print(f"  Inferring Half 2 ({len(df_h2):,} frames) with 5-Fold Ensemble...")
-    p_ens_h2 = np.mean([clf.predict_proba(df_h2[feature_cols]) for clf in models], axis=0)
+    predict_fn = lambda m, x: m.predict(x) if isinstance(m, lgb.Booster) else m.predict_proba(x)
+    p_ens_h2 = np.mean([predict_fn(m, df_h2[feature_cols]) for m in models], axis=0)
     p_cal_h2 = calibrate_physics(df_h2, p_ens_h2)
     v_raw_h2 = viterbi_decode(p_cal_h2, trans_matrix, trans_scale=0.10)
     v_filt_h2 = apply_duration_filter(v_raw_h2, min_live_len=45, min_dead_len=65)
