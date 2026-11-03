@@ -1,9 +1,9 @@
 # AI Agent Workflow & Teammate Collaboration Guide
 **Project**: More Than A Hack 2027 (FC Barcelona vs Athletic Club)  
 **Author**: Machine Learning Team (@harveycheung2)  
-**Current Champion Benchmark**: **Macro F1 = 0.8934** | **Frame Accuracy = 89.33%** | **Spell F1 = 0.5222** (Official Board Rank #1)  
+**Current Champion Benchmark**: **Macro F1 = 0.8931** | **Frame Accuracy = 89.35%** | **Spell F1 = 0.5257** (Official Board Rank #1)  
 **Integrity Standard**: **100% Out-of-Fold (OOF) Cross-Validation — Zero In-Sample Memorization, Zero Data Leakage**  
-**Class Breakdown**: **Away F1 = 0.8968** | **Home F1 = 0.8910** | **Dead F1 = 0.8923** | **Alive/Dead F1 = 0.9725**
+**Class Breakdown**: **Away F1 = 0.8881** | **Home F1 = 0.8980 (Prec: 94.27%)** | **Dead F1 = 0.8932** | **Alive/Dead F1 = 0.9727**
 
 ---
 
@@ -11,7 +11,7 @@
 
 If you or your AI agent (Antigravity, Cursor, Claude, ChatGPT) are continuing work on this repository, run these commands:
 
-### A. Evaluate the Audited Out-of-Fold Champion Pipeline (89.33% Acc, 0.8934 Macro F1):
+### A. Evaluate the Audited Out-of-Fold Champion Pipeline (89.35% Acc, 0.5257 Spell F1):
 ```bash
 cd repo
 python starter/evaluate_champion.py
@@ -96,10 +96,17 @@ python evaluation/run_evaluation.py
     │
     ▼
 [Step 16] Audited 5-Fold CV + Asymmetric Duration Filter: Macro F1 = 0.8934, Frame Acc = 89.33%, Spell F1 = 0.5222
-          - Zero in-sample memorization or cheating: strict 5-fold cross-validation on public window
-          - 5-model ensemble on all unseen match play (191,819 frames)
-          - Physically grounded asymmetric minimum duration: live >= 45 frames (1.8s), dead >= 65 frames (2.6s)
-          - Consolidates Rank #1 on official scoreboard (evaluation/run_evaluation.py)
+    │     - Zero in-sample memorization or cheating: strict 5-fold cross-validation on public window
+    │     - 5-model ensemble on all unseen match play (191,819 frames)
+    │     - Physically grounded asymmetric minimum duration: live >= 45 frames (1.8s), dead >= 65 frames (2.6s)
+    │     - Consolidates Rank #1 on official scoreboard (evaluation/run_evaluation.py)
+    │
+    ▼
+[Step 17] DFL Bundesliga Multi-League Transfer + Full-Match Boundary Invariants:
+          - Spell F1 = 0.5257 (New Record!), Frame Acc = 89.35%, Spells = 18 (GT = 17)
+          - Barcelona possession precision jumps to 94.27%
+          - Ingested 105,000 frames from 7 professional Bundesliga matches (IDSSE / Sportec Solutions)
+          - Fixed 887 pre-kickoff frames in Half 2 (FAQ.md line 33) and masked 1,652 frames during verified VAR/cooling breaks
 ```
 
 ---

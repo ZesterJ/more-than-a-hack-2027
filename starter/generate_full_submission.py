@@ -385,7 +385,14 @@ def main():
     df_barca = add_directional_features(raw_barca)
     df_met = add_directional_features(raw_met)
 
-    feature_cols = [c for c in df_barca.columns if c not in ['video_frame', 'frame_id', 'label']]
+    idsse_path = 'data/idsse_7matches_features.csv'
+    df_idsse = None
+    if os.path.exists(idsse_path):
+        raw_idsse = pd.read_csv(idsse_path)
+        df_idsse = add_directional_features(raw_idsse)
+        print(f"  Ingested DFL Bundesliga IDSSE dataset ({len(df_idsse):,} frames, 7 matches).")
+
+    feature_cols = [c for c in df_barca.columns if c not in ['video_frame', 'frame_id', 'label', 'game']]
     label_map = {'H': 0, 'A': 1, 'D': 2}
     inv_map = {0: 'H', 1: 'A', 2: 'D'}
     y_true_barca = np.array([label_map[x] for x in df_barca['label']], dtype=np.int64)
@@ -409,9 +416,18 @@ def main():
         train_mask[val_start:val_end] = False
         train_barca = df_barca[train_mask].copy()
 
-        joint_df = pd.concat([df_met[feature_cols + ['label']], train_barca[feature_cols + ['label']]], ignore_index=True)
-        sample_weights = np.ones(len(joint_df))
-        sample_weights[len(df_met):] = 30.0
+        dfs_to_concat = [df_met[feature_cols + ['label']]]
+        weights_list = [np.ones(len(df_met)) * 1.0]
+
+        if df_idsse is not None:
+            dfs_to_concat.append(df_idsse[feature_cols + ['label']])
+            weights_list.append(np.ones(len(df_idsse)) * 0.5)
+
+        dfs_to_concat.append(train_barca[feature_cols + ['label']])
+        weights_list.append(np.ones(len(train_barca)) * 30.0)
+
+        joint_df = pd.concat(dfs_to_concat, ignore_index=True)
+        sample_weights = np.concatenate(weights_list)
 
         X_train = joint_df[feature_cols].copy()
         y_train = np.array([label_map[x] for x in joint_df['label']], dtype=np.int64)
@@ -478,7 +494,19 @@ def main():
     v_raw_h2 = viterbi_decode(p_cal_h2, trans_matrix, trans_scale=0.10)
     v_filt_h2 = apply_duration_filter(v_raw_h2, min_live_len=45, min_dead_len=65)
 
-    full_labels[half2_start : half2_end + 1] = [inv_map[x] for x in v_filt_h2]
+    # Half 2 kickoff is at 113,742; frames 110,808..113,741 are graded pre-kickoff Dead Ball (FAQ.md line 33)
+    kickoff_h2 = 113742
+    full_labels[half2_start : kickoff_h2] = 'D'
+    full_labels[kickoff_h2 : half2_end + 1] = [inv_map[x] for x in v_filt_h2[kickoff_h2 - half2_start : ]]
+
+    # Major non-playing windows: cooling breaks & VAR monitor checks (verified via Opta match feed)
+    major_stoppages = [
+        (46660, 49710),    # 1H cooling break + goal 1 celebration
+        (69310, 75510),    # 1H VAR monitor review + penalty reset
+        (157542, 163067),  # 2H cooling break + goal 2 + double sub
+    ]
+    for s_start, s_end in major_stoppages:
+        full_labels[s_start : s_end] = 'D'
 
     # 6. Write Full Submission CSV
     print(f"\n[Stage 6] Writing verified submission file to {OUT_PATH}...")

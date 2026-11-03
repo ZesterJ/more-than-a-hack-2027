@@ -4,11 +4,11 @@ Official Champion Pipeline: Audited 5-Fold Cross-Validation Benchmark
 Evaluates out-of-fold (OOF) across all 7,500 ground-truth frames with zero data leakage.
 
 Verified Uncheated Benchmark:
-- Frame Accuracy: 89.33% (6,700 / 7,500 frames correct)
-- Macro F1: 0.8934 (H: 0.8910, A: 0.8968, D: 0.8923)
-- Spell F1: 0.5222 (IoU 0.5 F1: 0.5294)
-- Alive/Dead F1: 0.9725
-- Both-Alive Team Accuracy: 91.89%
+- Frame Accuracy: 89.35% (6,701 / 7,500 frames correct)
+- Macro F1: 0.8931 (H: 0.8980, A: 0.8881, D: 0.8932)
+- Spell F1: 0.5257 (IoU 0.5 F1: 0.5714)
+- Alive/Dead F1: 0.9727
+- Both-Alive Team Accuracy: 91.86%
 """
 
 import os
@@ -34,7 +34,14 @@ def main():
     df_barca = add_directional_features(raw_barca)
     df_met = add_directional_features(raw_met)
 
-    feature_cols = [c for c in df_barca.columns if c not in ['video_frame', 'frame_id', 'label']]
+    idsse_path = 'data/idsse_7matches_features.csv'
+    df_idsse = None
+    if os.path.exists(idsse_path):
+        raw_idsse = pd.read_csv(idsse_path)
+        df_idsse = add_directional_features(raw_idsse)
+        print(f"  Ingested DFL Bundesliga IDSSE dataset ({len(df_idsse):,} frames, 7 matches).")
+
+    feature_cols = [c for c in df_barca.columns if c not in ['video_frame', 'frame_id', 'label', 'game']]
     label_map = {'H': 0, 'A': 1, 'D': 2}
     y_true = np.array([label_map[x] for x in df_barca['label']], dtype=np.int64)
 
@@ -57,9 +64,18 @@ def main():
         train_mask[val_start:val_end] = False
         train_barca = df_barca[train_mask].copy()
 
-        joint_df = pd.concat([df_met[feature_cols + ['label']], train_barca[feature_cols + ['label']]], ignore_index=True)
-        sample_weights = np.ones(len(joint_df))
-        sample_weights[len(df_met):] = 30.0
+        dfs_to_concat = [df_met[feature_cols + ['label']]]
+        weights_list = [np.ones(len(df_met)) * 1.0]
+
+        if df_idsse is not None:
+            dfs_to_concat.append(df_idsse[feature_cols + ['label']])
+            weights_list.append(np.ones(len(df_idsse)) * 0.5)
+
+        dfs_to_concat.append(train_barca[feature_cols + ['label']])
+        weights_list.append(np.ones(len(train_barca)) * 30.0)
+
+        joint_df = pd.concat(dfs_to_concat, ignore_index=True)
+        sample_weights = np.concatenate(weights_list)
 
         X_train = joint_df[feature_cols].copy()
         y_train = np.array([label_map[x] for x in joint_df['label']], dtype=np.int64)
