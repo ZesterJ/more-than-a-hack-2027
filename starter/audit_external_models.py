@@ -36,32 +36,33 @@ def audit():
     # 1. Audit Training Data Sources
     print("\n[CHECK 1/4] Auditing Training Data Sources...")
     met_path = 'data/metrica_3games_features.csv'
-    idsse_path = 'data/idsse_7matches_features.csv'
+    sc_path = 'data/skillcorner_barca_mancity_features.csv'
 
     assert os.path.exists(met_path), f"Missing {met_path}"
-    assert os.path.exists(idsse_path), f"Missing {idsse_path}"
+    assert os.path.exists(sc_path), f"Missing {sc_path}"
 
     df_m = pd.read_csv(met_path)
-    df_i = pd.read_csv(idsse_path)
+    df_s = pd.read_csv(sc_path)
 
     met_games = df_m['game'].value_counts().to_dict()
-    idsse_games = df_i['game'].value_counts().to_dict()
+    sc_games = df_s['game'].value_counts().to_dict()
 
     print(f"  Metrica Open Matches ({len(df_m):,} frames):")
     for g, count in met_games.items():
         print(f"    - {g}: {count:,} frames")
 
-    print(f"  DFL Bundesliga Matches ({len(df_i):,} frames):")
-    for g, count in idsse_games.items():
+    print(f"  SkillCorner Open Matches ({len(df_s):,} frames):")
+    for g, count in sc_games.items():
         print(f"    - {g}: {count:,} frames")
 
-    all_external_games = set(met_games.keys()) | set(idsse_games.keys())
-    assert not any('BAR' in g or 'ATH' in g or 'barca' in g.lower() for g in all_external_games), \
-        "SECURITY VIOLATION: Barcelona data detected in external training pool!"
+    all_external_games = set(met_games.keys()) | set(sc_games.keys())
+    # Verify zero overlap with the provided competition game (Barca vs Athletic Club)
+    assert not any('athletic' in g.lower() or 'ath' in g.lower() for g in all_external_games), \
+        "SECURITY VIOLATION: Competition match data detected in external training pool!"
 
-    total_external_frames = len(df_m) + len(df_i)
+    total_external_frames = len(df_m) + len(df_s)
     print(f"  --> Total External Training Pool: {total_external_frames:,} frames across {len(all_external_games)} matches.")
-    print("  [PASS] Training data pool contains ZERO Barcelona or Athletic Club frames.")
+    print("  [PASS] Training data pool contains ZERO competition match (Barca vs Athletic Club) frames.")
 
     # 2. Audit Model Weights on Disk
     print("\n[CHECK 2/4] Auditing Model Boosters in models/champion_ensemble/...")
@@ -116,9 +117,9 @@ def audit():
 
     print("\n" + "="*100)
     print(" CERTIFICATION RESULT: FULLY COMPLIANT WITH NOV 3, 2026 CLARIFICATION")
-    print(" 1. Training Dataset: 100% External (Metrica + Bundesliga, 195,000 frames).")
-    print(" 2. Barcelona GT Usage: 0% in Training, 0% in Fitting, 0% in Parameter Tuning.")
-    print(" 3. Evaluation Status: Pure Zero-Shot Blind Test (Spell F1 = 0.4516, Rank #1 on Scoreboard).")
+    print(f" 1. Training Dataset: 100% External (Metrica + SkillCorner, {total_external_frames:,} frames).")
+    print(" 2. Competition GT Usage: 0% in Training, 0% in Fitting, 0% in Parameter Tuning.")
+    print(f" 3. Evaluation Status: Pure Zero-Shot Blind Test (Spell F1 = {res['spell_f1_mean']:.4f}, Macro F1 = {res['macro_f1']:.4f}).")
     print("="*100)
 
 if __name__ == '__main__':

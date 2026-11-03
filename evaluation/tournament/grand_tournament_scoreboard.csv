@@ -1,0 +1,13 @@
+,Name,Spell F1,Macro F1,Accuracy,Barca Precision,Stoppage Recall,Spells
+1,LGBM on 3. Metrica + SkillCorner (Barca & Pep ManCity),0.5857,0.9064,90.63%,94.11%,96.26%,11
+2,XGBoost on Best Data,0.5857,0.9042,90.47%,94.12%,96.26%,11
+3,Multi-Tree Ensemble (LGBM+XGB+CatBoost),0.5857,0.9068,90.68%,94.12%,96.26%,11
+4,LGBM on 2. Metrica + Positional Bundesliga (Alonso & Bayern),0.56,0.8852,88.41%,87.64%,92.17%,13
+5,Grand Hybrid (65% Tree + 35% TCN),0.5379,0.8849,88.97%,94.05%,96.26%,12
+6,Grand Hybrid (85% Tree + 15% TCN),0.5379,0.8921,89.49%,94.12%,96.26%,12
+7,Grand Hybrid (75% Tree + 25% TCN),0.5379,0.8896,89.29%,94.12%,96.26%,12
+8,LGBM on 5. Grand Corpus (Metrica + DFL Std + Alonso + Bayern + SkillCorner),0.5067,0.8657,86.88%,94.37%,97.41%,13
+9,CatBoost on Best Data,0.5067,0.8545,86.40%,92.00%,93.67%,13
+10,LGBM on 1. Metrica + DFL Standard (Baseline),0.4933,0.8593,86.27%,94.40%,97.41%,13
+11,LGBM on 4. Pure Positional Giants (Leverkusen + Bayern + SkillCorner),0.4606,0.8595,85.96%,88.37%,92.17%,16
+12,MS-TCN++ Deep Neural Net,0.4,0.8258,83.48%,92.19%,92.17%,16

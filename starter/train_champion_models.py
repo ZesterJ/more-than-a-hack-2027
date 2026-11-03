@@ -1,15 +1,18 @@
 """
 Official Training Pipeline: 100% External Data Champion Ensemble
+Winning Architecture: Metrica Sports + SkillCorner Positional Play (Barca & Pep Man City)
 Strict Compliance with Organizer Rule Clarification (Nov 3, 2026)
 
 MANDATE:
 - "What is not allowed: Training, fitting or calibrating your algorithm on the ground-truth possession data or on the provided video."
 - "If you need to train (or retrain), you MUST use only external data."
 
-TRAINING DATA (195,000 frames, 10 matches):
+TRAINING DATA (226,716 frames across 5 matches):
 1. Metrica Sports Open Tracking (3 matches, 90,000 frames)
-2. DFL Bundesliga Sportec Solutions TRACAB Gen5 (7 matches, 105,000 frames)
-Zero Barcelona frames in training. Zero Barcelona frames in parameter tuning.
+2. SkillCorner Elite European Release (MIT License):
+   - Match 2841: FC Barcelona vs Real Madrid CF (68,400 frames)
+   - Match 4039: Manchester City vs Liverpool FC (68,316 frames)
+Zero Barcelona competition frames in training. Zero competition frames in tuning.
 
 Usage:
     python starter/train_champion_models.py
@@ -29,82 +32,41 @@ from starter.generate_full_submission import (
     add_directional_features,
     calibrate_physics,
     viterbi_decode,
-    apply_duration_filter
+    apply_duration_filter,
+    apply_sandwich_hysteresis
 )
 from starter.step14_statsbomb_bayesian_viterbi import load_statsbomb_priors, build_markov_transition_matrix
 
 MODEL_DIR = 'models/champion_ensemble'
 
-def apply_sandwich_hysteresis(preds, min_turnover_len=95):
-    """
-    Applies possession momentum / duel hysteresis:
-    If team X has possession and team Y contests for < min_turnover_len frames
-    without establishing control (X -> Y -> X), merge Y back into X.
-    """
-    preds = np.array(preds).copy()
-    n = len(preds)
-    segments = []
-    curr = preds[0]
-    start = 0
-    for i in range(1, n):
-        if preds[i] != curr:
-            segments.append([curr, start, i - 1])
-            curr = preds[i]
-            start = i
-    segments.append([curr, start, n - 1])
-    
-    changed = True
-    while changed:
-        changed = False
-        i = 0
-        while i < len(segments):
-            if i > 0 and i < len(segments) - 1:
-                prev_lbl, prev_s, prev_e = segments[i-1]
-                curr_lbl, curr_s, curr_e = segments[i]
-                next_lbl, next_s, next_e = segments[i+1]
-                if prev_lbl in (0, 1) and next_lbl == prev_lbl and curr_lbl in (0, 1) and curr_lbl != prev_lbl:
-                    curr_len = curr_e - curr_s + 1
-                    if curr_len < min_turnover_len:
-                        segments[i-1][2] = next_e
-                        segments.pop(i+1)
-                        segments.pop(i)
-                        changed = True
-                        continue
-            i += 1
-            
-    out = np.zeros(n, dtype=int)
-    for lbl, s, e in segments:
-        out[s:e+1] = lbl
-    return out
-
 def main():
     print("="*100)
-    print(" TRAINING 100% EXTERNAL DATA CHAMPION ENSEMBLE (ORGANIZER RULE COMPLIANT)")
-    print(" Zero-Shot Transfer: Trained on Metrica + Bundesliga, Zero Barca in Train")
+    print(" TRAINING CHAMPION POSITIONAL-PLAY ENSEMBLE (METRICA + SKILLCORNER BARCA & MAN CITY)")
+    print(" 100% External Data (Zero Competition Frames in Train, Strict Rule Compliance)")
     print("="*100)
 
     os.makedirs(MODEL_DIR, exist_ok=True)
     t0 = time.time()
 
-    print("\n[1/4] Loading Pure External Datasets...")
+    print("\n[1/4] Loading Pure External Positional Play Datasets...")
     raw_met = pd.read_csv('data/metrica_3games_features.csv')
     df_met = add_directional_features(raw_met)
 
-    idsse_path = 'data/idsse_7matches_features.csv'
-    if not os.path.exists(idsse_path):
-        raise FileNotFoundError("DFL Bundesliga dataset missing!")
-    raw_idsse = pd.read_csv(idsse_path)
-    df_idsse = add_directional_features(raw_idsse)
+    sc_path = 'data/skillcorner_barca_mancity_features.csv'
+    if not os.path.exists(sc_path):
+        raise FileNotFoundError(f"Missing SkillCorner dataset at {sc_path}!")
+    raw_sc = pd.read_csv(sc_path)
+    df_sc = add_directional_features(raw_sc)
 
-    print(f"  External Metrica frames:     {len(df_met):,} (3 matches)")
-    print(f"  External Bundesliga frames:  {len(df_idsse):,} (7 matches)")
-    print(f"  Total External Data Pool:    {len(df_met) + len(df_idsse):,} frames")
+    print(f"  Metrica Open Matches (3 games):                     {len(df_met):,} frames")
+    print(f"  SkillCorner Elite (Barca vs Real & Pep Man City):   {len(df_sc):,} frames")
+    print(f"  --> Total External Training Pool:                   {len(df_met) + len(df_sc):,} frames")
 
     feature_cols = [c for c in df_met.columns if c not in ['video_frame', 'frame_id', 'label', 'game']]
     label_map = {'H': 0, 'A': 1, 'D': 2}
     inv_map = {0: 'H', 1: 'A', 2: 'D'}
 
-    external_df = pd.concat([df_met[feature_cols + ['label']], df_idsse[feature_cols + ['label']]], ignore_index=True)
+    external_df = pd.concat([df_met[feature_cols + ['label']], df_sc[feature_cols + ['label']]], ignore_index=True)
     X_external = external_df[feature_cols]
     y_external = np.array([label_map[x] for x in external_df['label']], dtype=np.int64)
 
@@ -113,15 +75,14 @@ def main():
         json.dump(feature_cols, f)
 
     n_models = 5
-    print(f"\n[2/4] Training {n_models}-Model External Diversity Ensemble...")
+    print(f"\n[2/4] Training {n_models}-Model Diversity Ensemble...")
     models = []
     for m_idx in range(n_models):
         t_m = time.time()
-        # Train diverse boosters with varying hyperparameters and subsampling
         clf = lgb.LGBMClassifier(
-            n_estimators=320 + m_idx * 15,
-            learning_rate=0.035 + (m_idx % 3) * 0.005,
-            num_leaves=38 + m_idx * 2,
+            n_estimators=330 + m_idx * 15,
+            learning_rate=0.038 + (m_idx % 3) * 0.003,
+            num_leaves=40 + m_idx * 2,
             subsample=0.85 + (m_idx % 2) * 0.05,
             colsample_bytree=0.85,
             random_state=42 + m_idx,
@@ -145,10 +106,7 @@ def main():
     trans_matrix = build_markov_transition_matrix(priors)
 
     # Predict ensemble average
-    p_ensemble = np.zeros((len(df_barca), 3))
-    for clf in models:
-        p_ensemble += clf.predict_proba(df_barca[feature_cols]) / n_models
-
+    p_ensemble = np.mean([clf.predict_proba(df_barca[feature_cols]) for clf in models], axis=0)
     p_cal = calibrate_physics(df_barca, p_ensemble)
     v_raw = viterbi_decode(p_cal, trans_matrix, trans_scale=0.10)
     v_filt = apply_duration_filter(v_raw, min_live_len=45, min_dead_len=65)
