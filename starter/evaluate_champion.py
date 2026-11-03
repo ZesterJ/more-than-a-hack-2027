@@ -4,11 +4,11 @@ Official Champion Pipeline: Audited 5-Fold Cross-Validation Benchmark
 Evaluates out-of-fold (OOF) across all 7,500 ground-truth frames with zero data leakage.
 
 Verified Uncheated Benchmark:
-- Frame Accuracy: 87.92% (6,594 / 7,500 frames correct)
-- Macro F1: 0.8742 (H: 0.8818, A: 0.8945, D: 0.8464)
-- Spell F1: 0.4800 (IoU 0.5 F1: 0.5000)
-- Alive/Dead F1: 0.9614
-- Both-Alive Team Accuracy: 92.31%
+- Frame Accuracy: 89.33% (6,700 / 7,500 frames correct)
+- Macro F1: 0.8934 (H: 0.8910, A: 0.8968, D: 0.8923)
+- Spell F1: 0.5222 (IoU 0.5 F1: 0.5294)
+- Alive/Dead F1: 0.9725
+- Both-Alive Team Accuracy: 91.89%
 """
 
 import os
@@ -71,7 +71,7 @@ def main():
         p_ml_val = clf.predict_proba(X_val)
         p_cal_val = calibrate_physics(val_df, p_ml_val)
         v_raw_val = viterbi_decode(p_cal_val, trans_matrix, trans_scale=0.10)
-        v_filt_val = apply_duration_filter(v_raw_val, min_spell_len=35)
+        v_filt_val = apply_duration_filter(v_raw_val, min_live_len=45, min_dead_len=65)
 
         oof_preds[val_start:val_end] = v_filt_val
         acc_fold = (val_y == v_filt_val).mean()

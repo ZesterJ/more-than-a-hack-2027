@@ -323,8 +323,13 @@ def viterbi_decode(probs, trans_matrix, trans_scale=0.10):
 
     return best_path
 
-def apply_duration_filter(preds_arr, min_spell_len=35):
-    """Semi-Markov filter removing physically unfeasible micro-flickers (< 1.4 seconds)."""
+def apply_duration_filter(preds_arr, min_live_len=45, min_dead_len=65):
+    """
+    Physically grounded asymmetric semi-Markov duration filter:
+    - Live possession changes require >= 45 frames (1.8s) of controlled team play.
+    - Dead-ball stoppages (fouls, out of bounds, goal kicks) require >= 65 frames (2.6s).
+    Eliminates momentary unconfirmed contact flickers and slow-buildup false stoppages.
+    """
     segs = []
     curr = preds_arr[0]; s = 0
     for i in range(1, len(preds_arr)):
@@ -333,16 +338,30 @@ def apply_duration_filter(preds_arr, min_spell_len=35):
             curr = preds_arr[i]; s = i
     segs.append([curr, s, len(preds_arr) - 1])
 
-    cleaned = []
-    for lbl, s, e in segs:
-        dur = e - s + 1
-        if dur < min_spell_len and len(cleaned) > 0:
-            cleaned[-1][2] = e
-        else:
-            cleaned.append([lbl, s, e])
+    changed = True
+    while changed:
+        changed = False
+        cleaned = []
+        for i in range(len(segs)):
+            lbl, s, e = segs[i]
+            dur = e - s + 1
+            threshold = min_dead_len if lbl == 2 else min_live_len
+            if dur < threshold and len(cleaned) > 0:
+                cleaned[-1][2] = e
+                changed = True
+            else:
+                cleaned.append([lbl, s, e])
+        
+        merged = []
+        for seg in cleaned:
+            if merged and merged[-1][0] == seg[0]:
+                merged[-1][2] = seg[2]
+            else:
+                merged.append(seg)
+        segs = merged
 
     res = np.zeros(len(preds_arr), dtype=int)
-    for lbl, s, e in cleaned:
+    for lbl, s, e in segs:
         res[s : e + 1] = lbl
     return res
 
@@ -405,7 +424,7 @@ def main():
         p_ml_val = clf.predict_proba(X_val)
         p_cal_val = calibrate_physics(val_df, p_ml_val)
         v_raw_val = viterbi_decode(p_cal_val, trans_matrix, trans_scale=0.10)
-        v_filt_val = apply_duration_filter(v_raw_val, min_spell_len=35)
+        v_filt_val = apply_duration_filter(v_raw_val, min_live_len=45, min_dead_len=65)
 
         oof_preds[val_start:val_end] = v_filt_val
         acc_fold = (val_y == v_filt_val).mean()
@@ -443,7 +462,7 @@ def main():
         p_ens_unseen_h1 = np.mean([clf.predict_proba(unseen_h1_df[feature_cols]) for clf in models], axis=0)
         p_cal_unseen_h1 = calibrate_physics(unseen_h1_df, p_ens_unseen_h1)
         v_raw_unseen_h1 = viterbi_decode(p_cal_unseen_h1, trans_matrix, trans_scale=0.10)
-        v_filt_unseen_h1 = apply_duration_filter(v_raw_unseen_h1, min_spell_len=35)
+        v_filt_unseen_h1 = apply_duration_filter(v_raw_unseen_h1, min_live_len=45, min_dead_len=65)
         full_labels[half1_start + len(oof_preds) : half1_end + 1] = [inv_map[x] for x in v_filt_unseen_h1]
 
     # Half 2 Processing (all unseen frames 110808 .. 190197)
@@ -457,7 +476,7 @@ def main():
     p_ens_h2 = np.mean([clf.predict_proba(df_h2[feature_cols]) for clf in models], axis=0)
     p_cal_h2 = calibrate_physics(df_h2, p_ens_h2)
     v_raw_h2 = viterbi_decode(p_cal_h2, trans_matrix, trans_scale=0.10)
-    v_filt_h2 = apply_duration_filter(v_raw_h2, min_spell_len=35)
+    v_filt_h2 = apply_duration_filter(v_raw_h2, min_live_len=45, min_dead_len=65)
 
     full_labels[half2_start : half2_end + 1] = [inv_map[x] for x in v_filt_h2]
 
