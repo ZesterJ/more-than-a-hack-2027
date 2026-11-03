@@ -25,6 +25,7 @@ evaluation/results/*.csv
 !evaluation/results/baseline_*.csv
 evaluation/reports/
 evaluation/scoreboard.csv
+experiments/results.csv   # local trial log
 
 # -- gated data --------------------------------------------------------------------------------
 # data/ is committed empty, with only its README, so the folder participants are told to unpack
@@ -62,7 +63,6 @@ __pycache__/
 venv/
 env/
 .DS_Store
-scratch/
-catboost_info/
 
-!starter/TACTICAL_ML_BALL_POSSESSION_REPORT.pdf
+# -- teammates' research notes (local reference only) ---------------------------------------
+REFERENCES/
