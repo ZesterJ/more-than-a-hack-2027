@@ -159,3 +159,26 @@ Extracts **31 collective, permutation-invariant features** at >6,500 frames/seco
 
 *Generated PDF report: `More_Than_A_Hack_2027_Model_Benchmark.pdf`.*
 
+
+## 🧪 External-data benchmark: `04_external_benchmark.ipynb` (competition-compliant)
+
+Follows the organisers' clarified rules: **train and tune on external data only; the public ground truth is never used to
+train, fit or tune anything.** Seven IDSSE matches (Sportec/DFL, CC-BY 4.0, `python starter/external.py --fetch-idsse`,
+2.6 GB, git-ignored) are validated leave-one-match-out; decoder settings are tuned on those external predictions; the
+provided match contributes only its tracking (model input, plus where its ball goes unseen).
+
+- `features.py`: tracking -> 30 collective / kinematic features (and Smart Tagging priors, unused by the external-trained model).
+- `external.py`: IDSSE loader (provider labels, km/h -> m/s). The Metrica loader is kept but **not used**: its README states no licence.
+- `external_pipeline.py`: leave-one-match-out posteriors, decoder tuning, model fitting.
+- `tactical.py` / `benchmark.py`: decoder rules (smoothing, contact-conditioned duration filter, Viterbi) and models.
+- `generate_full_submission.py`: `python starter/generate_full_submission.py --model lightgbm` writes `evaluation/results/ext_lightgbm.csv`
+  (deterministic). Run `python evaluation/run_evaluation.py` once afterwards to *report* the score, never to choose settings.
+
+IDSSE's possession definition is more fragmented than the competition's (median 3-4 s), so its scores are for comparing model
+families and decoders, not for predicting the leaderboard.
+
+## ✅ Tests
+
+`python -m pytest tests` (28 fast checks): decoder rules, feature builders, label derivation, the external-only pipeline,
+scorer anchors, and a guard that fails if the pipeline files or notebook ever reference the ground truth.
+`tests/notebook_builders/` rebuilds the notebook from source.
