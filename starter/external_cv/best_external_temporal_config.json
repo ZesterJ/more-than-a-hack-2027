@@ -1,0 +1,8 @@
+{
+  "tau": 0.08,
+  "min_live": 30,
+  "min_dead": 45,
+  "min_turnover": 50,
+  "oof_accuracy": 0.8477698971400343,
+  "oof_macro_f1": 0.8482674877680582
+}
