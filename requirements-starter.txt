@@ -13,3 +13,12 @@ matplotlib
 
 # For the notebooks in starter/
 notebook
+
+# For starter/04_model_benchmark.ipynb (classical models). torch is optional: without it the
+# notebook skips the neural-network section automatically.
+scikit-learn
+lightgbm
+# torch
+
+# tests (python -m pytest tests)
+pytest
