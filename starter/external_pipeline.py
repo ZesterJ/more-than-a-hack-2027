@@ -24,7 +24,9 @@ sys.path.insert(0, os.path.join(ROOT, "evaluation"))
 import possession_metrics as pm  # noqa: E402
 import external as ext  # noqa: E402
 from benchmark import Hierarchical, _full_proba  # noqa: E402
-from features import (FPS, LABEL_START, build_extra, build_features, load_tracking)  # noqa: E402
+from features import (FPS, LABEL_START, _rolling_mean, _run_length_since_change, build_extra,  # noqa: E402
+                      build_features, load_tracking)
+from games import GAME, GAMES  # noqa: E402
 from tactical import decode_pipeline  # noqa: E402
 from sklearn.linear_model import LogisticRegression  # noqa: E402
 from sklearn.pipeline import make_pipeline  # noqa: E402
@@ -42,15 +44,60 @@ GRID = [dict(w=w, min_s=m, contact_m=c, inflight_thr=None)
         if not (m == 0 and c)]  # the contact filter only matters together with a duration filter
 
 
-def featureset(trk, is_home):
-    """(X, aux): 30 model features and the per-frame arrays the decoder rules need."""
+ADVANCED = [
+    "ball_rel_home_cx", "ball_rel_home_cy", "ball_rel_away_cx", "ball_rel_away_cy",
+    "team_area_diff", "compactness_diff",
+    "d_margin_roll_13", "d_margin_roll_100", "d_margin_velocity", "d_min_roll_1s",
+    "speed_all_roll_1s", "speed_all_roll_4s", "missing_roll_13", "missing_roll_4s",
+    "dwell_home_1m", "dwell_away_1m", "dwell_home_2m", "dwell_away_2m",
+    "pressure_diff", "stoppage_slow_energy",
+]
+
+
+def advanced_block(X22, E):
+    """Teammates' multi-scale / dwell / shape ideas (starter/advanced_features.py on their branch), rebuilt from
+    the columns we already have so it needs no extra tracking pass. Nothing here reads labels."""
+    length, width = GAMES[GAME]["pitch"]
+    bx, by = E.ball_x.values * length, E.ball_y.values * width
+    dm, dmin = X22.d_margin.values, E.d_min.values
+    d_home = np.where(dm >= 0, dmin, dmin - dm)  # d_margin = d_away - d_home, d_min = their minimum
+    d_away = np.where(dm >= 0, dmin + dm, dmin)
+
+    def dwell(flag):  # seconds the condition has held continuously, capped at 10 s
+        return np.where(flag, np.minimum((_run_length_since_change(flag.astype(np.int8)) + 1) / FPS, 10.0), 0.0)
+
+    a = {}
+    a["ball_rel_home_cx"], a["ball_rel_home_cy"] = bx - X22.home_cx.values, by - X22.home_cy.values
+    a["ball_rel_away_cx"], a["ball_rel_away_cy"] = bx - X22.away_cx.values, by - X22.away_cy.values
+    area_h, area_a = X22.home_spread_x.values * X22.home_spread_y.values, X22.away_spread_x.values * X22.away_spread_y.values
+    a["team_area_diff"] = area_h - area_a
+    a["compactness_diff"] = (X22.home_spread_x.values + X22.home_spread_y.values) - (
+        X22.away_spread_x.values + X22.away_spread_y.values)
+    a["d_margin_roll_13"], a["d_margin_roll_100"] = _rolling_mean(dm, 13), _rolling_mean(dm, 100)
+    a["d_margin_velocity"] = np.diff(dm, prepend=dm[:1]) * FPS
+    a["d_min_roll_1s"] = _rolling_mean(dmin, FPS)
+    spd, miss = X22.overall_speed.values, X22.ball_missing.values
+    a["speed_all_roll_1s"], a["speed_all_roll_4s"] = _rolling_mean(spd, FPS), _rolling_mean(spd, 4 * FPS)
+    a["missing_roll_13"], a["missing_roll_4s"] = _rolling_mean(miss, 13), _rolling_mean(miss, 4 * FPS)
+    for name, d, r in (("home_1m", d_home, 1.0), ("away_1m", d_away, 1.0), ("home_2m", d_home, 2.0), ("away_2m", d_away, 2.0)):
+        a["dwell_" + name] = dwell(d < r)
+    a["pressure_diff"] = X22.home_within_3m.values - X22.away_within_3m.values
+    a["stoppage_slow_energy"] = a["speed_all_roll_1s"] * (1.0 - a["missing_roll_4s"])
+    return np.column_stack([a[k] for k in ADVANCED]).astype(np.float32)
+
+
+def featureset(trk, is_home, advanced=False):
+    """(X, aux): 30 model features (+20 advanced ones if asked) and the per-frame arrays the decoder rules need."""
     X22 = build_features(trk, is_home=is_home)
     E = build_extra(trk, X22)
     aux = dict(d_min=E.d_min.values, ball_missing=X22.ball_missing.values,
                speed_all_roll_2s=X22.speed_all_roll_2s.values, ball_accel=E.ball_accel.values)
     names = list(X22.columns) + list(E.columns)
     keep = [i for i, n in enumerate(names) if n not in UNOBSERVED]
-    return np.hstack([X22.values, E.values])[:, keep], aux
+    X = np.hstack([X22.values, E.values])[:, keep]
+    if advanced:
+        X = np.nan_to_num(np.hstack([X, advanced_block(X22, E)]))
+    return X, aux
 
 
 def ball_unseen_pattern(n_frames=15 * 60 * FPS):
@@ -60,7 +107,7 @@ def ball_unseen_pattern(n_frames=15 * 60 * FPS):
     return np.isnan(trk["ball"][LABEL_START:LABEL_START + n_frames, 0])
 
 
-def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES):
+def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False):
     """{match: dict(X, aux, y, period)}, oriented so the home team attacks +x, with `pattern` applied."""
     sets = {}
     for m in matches:
@@ -68,7 +115,7 @@ def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES):
         trk = ext.orient_home_attacks_right(trk, trk["is_home"], ext.period_segments(trk))
         if pattern is not None:
             trk = ext.apply_occlusion(trk, pattern)
-        X, aux = featureset(trk, trk["is_home"])
+        X, aux = featureset(trk, trk["is_home"], advanced)
         sets[m] = dict(X=X, aux=aux, y=trk["labels"], period=trk["period"])
     return sets
 

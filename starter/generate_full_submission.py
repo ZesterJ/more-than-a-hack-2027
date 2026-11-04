@@ -6,7 +6,8 @@
 Competition rules: training uses only external data and every tuned parameter is tuned on external data. This
 script therefore never reads the public ground truth. The recipe:
 
-  1. features: 30 collective / kinematic features (features.py), pitch oriented so the home team attacks +x in
+  1. features: 30 collective / kinematic features (features.py) + 20 multi-scale / dwell / shape ones
+     (external_pipeline.advanced_block; +0.022 leave-one-match-out, better on 7/7 matches), pitch oriented so the home team attacks +x in
      every half of every match;
   2. model: trained on the seven IDSSE matches (provider labels), every 6th frame;
   3. decoder: smoothing / duration filter / contact filter chosen by leave-one-match-out on those same matches;
@@ -33,7 +34,7 @@ from games import GAME, GAMES, asset_paths  # noqa: E402
 from tactical import decode_pipeline  # noqa: E402
 
 
-def predict_and_write(model, params, out_name):
+def predict_and_write(model, params, out_name, advanced=True):
     """Decode this match's two halves with an already-trained `model` and write the submission CSV."""
     n_frames = GAMES[GAME]["n_video_frames"]
     offsets, halves = GAMES[GAME]["offsets"], GAMES[GAME]["halves"]
@@ -41,7 +42,7 @@ def predict_and_write(model, params, out_name):
     trk = load_tracking(n_frames)
     is_home = team_of_each_track(asset_paths()["atd_meta"]) == 0
     trk = ext.orient_home_attacks_right(trk, is_home, spans)
-    X, aux = ep.featureset(trk, is_home)
+    X, aux = ep.featureset(trk, is_home, advanced)
 
     codes = np.full(n_frames, 3, dtype=np.int8)
     for a, b in spans:
@@ -52,17 +53,18 @@ def predict_and_write(model, params, out_name):
     return path
 
 
-def main(out_name, model_name):
-    sets = ep.load_idsse_sets(ep.ball_unseen_pattern())
+def main(out_name, model_name, advanced=True):
+    sets = ep.load_idsse_sets(ep.ball_unseen_pattern(), advanced=advanced)
     posts = ep.lomo_posteriors(model_name, sets)
     params, _ = ep.tune_decoder(posts, sets)
     print("decoder (leave-one-match-out on IDSSE): {}".format(params))
-    return predict_and_write(ep.fit(model_name, sets), params, out_name)
+    return predict_and_write(ep.fit(model_name, sets), params, out_name, advanced)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default="ext_lightgbm.csv")
     parser.add_argument("--model", choices=sorted(ep.MODELS), default="lightgbm")
+    parser.add_argument("--base-features", action="store_true", help="30 features instead of 50")
     args = parser.parse_args()
-    main(args.out, args.model)
+    main(args.out, args.model, advanced=not args.base_features)
