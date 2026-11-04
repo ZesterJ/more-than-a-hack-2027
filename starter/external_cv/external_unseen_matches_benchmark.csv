@@ -1,0 +1,7 @@
+Experiment,Unseen Accuracy,Unseen Macro F1,Home F1,Away F1,Stoppage F1,Barca Clásico Acc,Pep ManCity Acc,Metrica 3 Acc
+6. Multi-Tree Blend + Duel Hysteresis (min_len=95),81.67,0.8118,0.7983,0.7678,0.8694,80.6,79.33,89.41
+"4. XGBoost Hist (41 features, colsample=0.75)",81.1,0.8053,0.7811,0.7454,0.8896,79.66,78.02,91.37
+"2. Upgraded Features (41 features, colsample=0.85)",81.04,0.8048,0.7792,0.7442,0.8909,79.74,77.88,91.16
+"5. Multi-Tree Blend (LGBM + XGB, colsample=0.75)",81.02,0.8045,0.7797,0.7434,0.8904,79.68,77.76,91.45
+"3. Feature Weight Tuning (41 features, colsample=0.75)",80.87,0.803,0.7774,0.741,0.8906,79.57,77.57,91.29
+"1. Baseline LightGBM (38 features, colsample=0.85)",73.97,0.731,0.6767,0.6372,0.8791,69.88,70.86,90.2
