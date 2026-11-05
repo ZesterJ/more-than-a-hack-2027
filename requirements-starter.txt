@@ -14,11 +14,14 @@ matplotlib
 # For the notebooks in starter/
 notebook
 
-# For starter/04_model_benchmark.ipynb (classical models). torch is optional: without it the
+# For starter/04_external_benchmark.ipynb and the submission pipeline. torch is optional: without it the
 # notebook skips the neural-network section automatically.
-scikit-learn
-lightgbm
+scikit-learn==1.5.1
+lightgbm==4.7.0
 # torch
 
 # tests (python -m pytest tests)
 pytest
+
+# The submission was produced with Python 3.12.7, numpy 1.26.4, pandas 2.2.2, scikit-learn 1.5.1, lightgbm 4.7.0.
+# LightGBM needs OpenMP: on macOS run `brew install libomp`.
