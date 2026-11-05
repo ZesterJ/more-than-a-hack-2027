@@ -74,3 +74,35 @@ def test_shift_looks_back_and_ahead_with_edge_fill():
     assert ep._shift(a, 2).tolist() == [0, 0, 0, 1, 2, 3]     # a[t-2]
     assert ep._shift(a, -2).tolist() == [2, 3, 4, 5, 5, 5]    # a[t+2]
     assert ep._shift(a, 0).tolist() == a.tolist()
+
+
+def _toy_tracking(n=40):
+    import numpy as np
+    rng = np.random.RandomState(0)
+    return dict(players=rng.rand(n, 6, 3).astype(np.float32), ball=rng.rand(n, 3).astype(np.float32),
+                is_home=np.array([True, True, True, False, False, False]),
+                labels=rng.randint(0, 3, n).astype(np.int8))
+
+
+def test_mirroring_twice_is_the_identity_and_swaps_team_labels_once():
+    import numpy as np
+    import external_pipeline as ep
+    t = _toy_tracking()
+    for mode in ("y", "xswap"):
+        back = ep.mirror_tracking(ep.mirror_tracking(t, mode), mode)
+        assert np.allclose(back["players"], t["players"]) and np.allclose(back["ball"], t["ball"])
+        assert (back["labels"] == t["labels"]).all() and (back["is_home"] == t["is_home"]).all()
+    once = ep.mirror_tracking(t, "xswap")
+    assert ((once["labels"] == 1) == (t["labels"] == 0)).all()      # H <-> A
+    assert ((once["labels"] == 2) == (t["labels"] == 2)).all()      # dead ball stays dead
+    assert (once["is_home"] == ~t["is_home"]).all()
+
+
+def test_domain_weights_are_clipped_and_average_one_without_labels():
+    import numpy as np
+    import external_pipeline as ep
+    rng = np.random.RandomState(0)
+    sets = {m: dict(X=rng.randn(900, 5) + 0.2 * i) for i, m in enumerate("abc")}   # no labels anywhere
+    w = ep.domain_weights(sets, rng.randn(600, 5) + 0.5)
+    for m in sets:
+        assert abs(w[m].mean() - 1.0) < 1e-6 and w[m].min() > 0
