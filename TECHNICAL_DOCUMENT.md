@@ -66,5 +66,7 @@ python starter/generate_full_submission.py --out submission.csv # defaults = sub
 python evaluation/validate_submission.py evaluation/results/submission.csv
 python -m pytest tests                                          # includes a guard against touching the ground truth
 ```
-Python 3.12.7, numpy 1.26.4, pandas 2.2.2, scikit-learn 1.5.1, lightgbm 4.7.0. The run is deterministic.
+Python 3.12.7 (use 3.12: scikit-learn 1.5.1 has no wheels for 3.13), numpy 1.26.4, pandas 2.2.2, scikit-learn 1.5.1,
+lightgbm 4.7.0. The run is deterministic: a fresh clone of the repository, with the data caches rebuilt from the raw files,
+produced a byte-identical submission.
 Notebook `starter/04_external_benchmark.ipynb` shows the validation and export step by step.

@@ -24,4 +24,5 @@ lightgbm==4.7.0
 pytest
 
 # The submission was produced with Python 3.12.7, numpy 1.26.4, pandas 2.2.2, scikit-learn 1.5.1, lightgbm 4.7.0.
+# Use Python 3.12: scikit-learn 1.5.1 has no wheels for 3.13 (the pins above do not install there).
 # LightGBM needs OpenMP: on macOS run `brew install libomp`.
