@@ -65,3 +65,12 @@ def test_pipeline_files_and_notebook_do_not_touch_the_ground_truth():
         text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
         hits = [m.group(0) for m in GT_PATTERNS.finditer(text)]
         assert not hits, "%s references the ground truth: %s" % (rel, hits)
+
+
+def test_shift_looks_back_and_ahead_with_edge_fill():
+    import numpy as np
+    import external_pipeline as ep
+    a = np.arange(6.0)
+    assert ep._shift(a, 2).tolist() == [0, 0, 0, 1, 2, 3]     # a[t-2]
+    assert ep._shift(a, -2).tolist() == [2, 3, 4, 5, 5, 5]    # a[t+2]
+    assert ep._shift(a, 0).tolist() == a.tolist()

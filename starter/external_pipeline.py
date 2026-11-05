@@ -16,6 +16,7 @@ import os
 import sys
 
 import numpy as np
+import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -27,7 +28,7 @@ from benchmark import Hierarchical, _full_proba  # noqa: E402
 from features import (FPS, LABEL_START, _rolling_mean, _run_length_since_change, build_extra,  # noqa: E402
                       build_features, load_tracking)
 from games import GAME, GAMES  # noqa: E402
-from tactical import decode_pipeline  # noqa: E402
+from tactical import controlled_possession, decode_pipeline  # noqa: E402
 from sklearn.linear_model import LogisticRegression  # noqa: E402
 from sklearn.pipeline import make_pipeline  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
@@ -86,7 +87,79 @@ def advanced_block(X22, E):
     return np.column_stack([a[k] for k in ADVANCED]).astype(np.float32)
 
 
-def featureset(trk, is_home, advanced=False):
+BOUNDARY = [
+    "ball_spd_pos", "ball_spd_chg", "ball_dir_chg", "d_home_closing", "d_away_closing",
+    "d3_home", "d3_away", "d3_diff", "nearest_switches_2s", "opp_pressure_4m",
+    "d_margin_lag1s", "d_margin_lead1s", "d_margin_lag3s", "d_margin_lead3s", "d_min_lag1s", "d_min_lead1s",
+]
+
+
+def _shift(a, k):
+    """a[t - k] with the array's edge value repeated (k > 0 looks back, k < 0 looks ahead)."""
+    out = np.empty_like(a)
+    if k > 0:
+        out[k:], out[:k] = a[:-k], a[0]
+    elif k < 0:
+        out[:k], out[k:] = a[-k:], a[-1]
+    else:
+        out[:] = a
+    return out
+
+
+def boundary_block(trk, is_home, X22, E):
+    """Features for *when control changes hands*: ball velocity / direction change rebuilt from positions (this
+    match has no tracked ball speed), how fast each team is closing on the ball, the 3-nearest-player picture,
+    nearest-player churn, local pressure, and the margin 1 s / 3 s before and after (a cheap look at context).
+    Nothing here reads labels."""
+    length, width = GAMES[GAME]["pitch"]
+    P, B = trk["players"], trk["ball"]
+    n = len(B)
+    px, py = P[:, :, 0] * length, P[:, :, 1] * width
+    bx, by = B[:, 0] * length, B[:, 1] * width
+    missing = np.isnan(bx)
+    bxf = pd.Series(bx).ffill().bfill().fillna(length / 2).values
+    byf = pd.Series(by).ffill().bfill().fillna(width / 2).values
+    a = {}
+    # ball kinematics from positions (zero while the ball is unseen)
+    vx = (_shift(bxf, -3) - _shift(bxf, 3)) / 6 * FPS
+    vy = (_shift(byf, -3) - _shift(byf, 3)) / 6 * FPS
+    spd = np.where(missing, 0.0, np.minimum(np.hypot(vx, vy), 40.0))
+    a["ball_spd_pos"] = spd
+    a["ball_spd_chg"] = np.abs(_shift(spd, -12) - _shift(spd, 12))
+    pvx, pvy = bxf - _shift(bxf, 12), byf - _shift(byf, 12)
+    fvx, fvy = _shift(bxf, -12) - bxf, _shift(byf, -12) - byf
+    den = np.hypot(pvx, pvy) * np.hypot(fvx, fvy)
+    cos = np.where(den > 1e-6, (pvx * fvx + pvy * fvy) / np.maximum(den, 1e-6), 1.0)
+    a["ball_dir_chg"] = np.where(missing, 0.0, np.arccos(np.clip(cos, -1, 1)))
+    # nearest players of each team
+    dist = np.hypot(px - bx[:, None], py - by[:, None])
+    inf = np.where(np.isnan(dist), np.inf, dist)
+    dh, da = np.where(is_home[None, :], inf, np.inf), np.where(~is_home[None, :], inf, np.inf)
+    d_home, d_away = np.minimum(dh.min(1), 30.0), np.minimum(da.min(1), 30.0)
+    a["d_home_closing"], a["d_away_closing"] = d_home - _shift(d_home, 12), d_away - _shift(d_away, 12)
+    k3 = lambda d: np.minimum(np.sort(d, 1)[:, :3], 30.0).mean(1)
+    a["d3_home"], a["d3_away"] = k3(dh), k3(da)
+    a["d3_diff"] = a["d3_away"] - a["d3_home"]
+    near = np.where(missing, -1, inf.argmin(1))
+    changed = (near != _shift(near, 1)) & (near >= 0) & (_shift(near, 1) >= 0)
+    c = np.concatenate(([0], np.cumsum(changed)))
+    idx = np.arange(n)
+    a["nearest_switches_2s"] = c[np.minimum(idx + 26, n)] - c[np.maximum(idx - 25, 0)]
+    safe = np.maximum(near, 0)
+    nx, ny = px[idx, safe], py[idx, safe]
+    d_np = np.hypot(px - nx[:, None], py - ny[:, None])
+    opp = np.where(is_home[safe][:, None], ~is_home[None, :], is_home[None, :])
+    with np.errstate(invalid="ignore"):
+        a["opp_pressure_4m"] = np.where(near >= 0, np.nansum((d_np < 4.0) & opp, 1), 0)
+    dm, dmin = X22.d_margin.values, E.d_min.values
+    for name, arr, k in (("d_margin_lag1s", dm, FPS), ("d_margin_lead1s", dm, -FPS),
+                         ("d_margin_lag3s", dm, 3 * FPS), ("d_margin_lead3s", dm, -3 * FPS),
+                         ("d_min_lag1s", dmin, FPS), ("d_min_lead1s", dmin, -FPS)):
+        a[name] = _shift(np.asarray(arr), k)
+    return np.nan_to_num(np.column_stack([a[k] for k in BOUNDARY]).astype(np.float32))
+
+
+def featureset(trk, is_home, advanced=False, boundary=False):
     """(X, aux): 30 model features (+20 advanced ones if asked) and the per-frame arrays the decoder rules need."""
     X22 = build_features(trk, is_home=is_home)
     E = build_extra(trk, X22)
@@ -97,17 +170,30 @@ def featureset(trk, is_home, advanced=False):
     X = np.hstack([X22.values, E.values])[:, keep]
     if advanced:
         X = np.nan_to_num(np.hstack([X, advanced_block(X22, E)]))
+    if boundary:
+        X = np.hstack([X, boundary_block(trk, is_home, X22, E)])
     return X, aux
 
 
-def ball_unseen_pattern(n_frames=15 * 60 * FPS):
+def ball_unseen_pattern(first_minutes=None):
     """Where this match's tracking has no ball, from the tracking alone (no labels): tiled onto IDSSE's
-    always-present ball so the model sees the same kind of gaps at training and prediction time."""
-    trk = load_tracking(LABEL_START + n_frames)
-    return np.isnan(trk["ball"][LABEL_START:LABEL_START + n_frames, 0])
+    always-present ball so the model sees the same kind of gaps at training and prediction time.
+
+    By default the pattern is the two halves of the whole match (the ball is unseen ~41% of the time there,
+    against ~18% in the first 15 minutes), because the submission covers the whole match. `first_minutes`
+    restricts it to the labelled start of the match, which is what earlier versions used."""
+    if first_minutes:
+        n = first_minutes * 60 * FPS
+        trk = load_tracking(LABEL_START + n)
+        return np.isnan(trk["ball"][LABEL_START:LABEL_START + n, 0])
+    n_frames = GAMES[GAME]["n_video_frames"]
+    offsets, halves = GAMES[GAME]["offsets"], GAMES[GAME]["halves"]
+    trk = load_tracking(n_frames)
+    lost = np.isnan(trk["ball"][:, 0])
+    return np.concatenate([lost[halves[h][0] - offsets[h]:halves[h][1] - offsets[h] + 1] for h in (1, 2)])
 
 
-def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False):
+def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, control_s=None, boundary=False):
     """{match: dict(X, aux, y, period)}, oriented so the home team attacks +x, with `pattern` applied."""
     sets = {}
     for m in matches:
@@ -115,8 +201,11 @@ def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False):
         trk = ext.orient_home_attacks_right(trk, trk["is_home"], ext.period_segments(trk))
         if pattern is not None:
             trk = ext.apply_occlusion(trk, pattern)
-        X, aux = featureset(trk, trk["is_home"], advanced)
-        sets[m] = dict(X=X, aux=aux, y=trk["labels"], period=trk["period"])
+        X, aux = featureset(trk, trk["is_home"], advanced, boundary)
+        y = trk["labels"]
+        if control_s:  # relabel to "controlled possession": runs under control_s seconds join the previous team
+            y = controlled_possession(y, int(control_s * FPS))
+        sets[m] = dict(X=X, aux=aux, y=y, period=trk["period"])
     return sets
 
 

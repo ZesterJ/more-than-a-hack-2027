@@ -46,7 +46,7 @@ if not all(os.path.isfile(p) for m in ext.IDSSE_MATCHES for p in ext.idsse_files
 """)
 md("## 1. Load the seven matches")
 code("""
-sets = ep.load_idsse_sets(ep.ball_unseen_pattern())
+sets = ep.load_idsse_sets(ep.ball_unseen_pattern(), advanced=True, control_s=3, boundary=True)  # 66 features, controlled-possession labels
 def stats(m, d):
     y = d["y"]; sp = pm.possession_spells(y, pm.valid_runs(y)); L = np.array([(b - a) / 25 for a, b, _ in sp])
     return dict(match=m, frames=len(y), H=(y == 0).mean(), A=(y == 1).mean(), D=(y == 2).mean(),

@@ -52,6 +52,33 @@ def duration_filter(codes, min_frames, d_min=None, contact_m=None):
         codes[a:b] = codes[starts[i - 1]] if left >= right else codes[starts[i + 1]]
 
 
+def controlled_possession(codes, min_frames):
+    """Relabel provider data to the competition's notion of *controlled* possession (CHALLENGE.md):
+    a touch, deflection or loose ball does not change possession, which "stays with the last team that
+    had it". A live H/A run shorter than `min_frames` is therefore handed to the team that held the ball
+    just before (or, at the start of a live stretch, to the team that gets it next). A short run fenced in
+    by dead ball on both sides is a real, if brief, possession and is kept. Dead frames never change."""
+    codes = np.asarray(codes).copy()
+    skipped = set()
+    while True:
+        starts, stops = _runs(codes)
+        lengths = stops - starts
+        cand = [i for i in range(len(lengths))
+                if codes[starts[i]] != D and lengths[i] < min_frames and i not in skipped]
+        if not cand:
+            return codes
+        i = min(cand, key=lambda j: lengths[j])
+        a, b = starts[i], stops[i]
+        if i > 0 and codes[starts[i - 1]] != D:
+            codes[a:b] = codes[starts[i - 1]]
+        elif i + 1 < len(lengths) and codes[starts[i + 1]] != D:
+            codes[a:b] = codes[starts[i + 1]]
+        else:
+            skipped.add(i)
+            continue
+        skipped = set()  # run indices shifted after the merge
+
+
 def inflight_inertia(codes, ball_missing, speed_roll, speed_thr, max_frames):
     """A short 'dead' stretch while the ball is unseen and everyone is still running is a lofted
     pass, not a stoppage: hand it back to the team that had the ball just before."""
