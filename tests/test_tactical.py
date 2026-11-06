@@ -55,3 +55,13 @@ def test_decode_pipeline_default_is_plain_smoothing():
     P = rng.dirichlet(np.ones(3), size=300)
     from benchmark import smooth_proba
     assert np.array_equal(decode_pipeline(P, {}, w=25), smooth_proba(P, 25).argmax(1))
+
+
+def test_controlled_possession_hands_blips_to_previous_team():
+    from tactical import controlled_possession
+    H, A, D = 0, 1, 2
+    x = np.array([H] * 10 + [A] * 2 + [H] * 10 + [D] * 5 + [A] * 2 + [D] * 5 + [A] * 10)
+    out = controlled_possession(x, 5)
+    assert (out[10:12] == H).all()        # a 2-frame touch by A is not a change of possession
+    assert (out[27:29] == A).all()        # a short run fenced in by dead ball is kept
+    assert (out[x == D] == D).all()       # dead frames never change
