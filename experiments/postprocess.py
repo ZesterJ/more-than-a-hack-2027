@@ -42,6 +42,41 @@ def smooth_probs(probs, window):
     return ((csum[hi] - csum[lo]) / (hi - lo)[:, None]).argmax(axis=1).astype(np.int8)
 
 
+def viterbi(log_probs, switch_team, switch_dead, temperature=1.0, switch_restart=None):
+    """Most likely H/A/D path under per-frame log-probabilities and a cost for changing state.
+
+    log_probs      (n, 3) log P(state | features) for H, A, D
+    switch_team    cost of H <-> A (a change of possession)
+    switch_dead    cost of live -> D (the ball going dead)
+    switch_restart cost of D -> live (play restarting); defaults to switch_dead
+    temperature    divides the emission term; > 1 trusts the frame classifier less, which is the
+                   same as making the switch costs bigger. Frames are heavily autocorrelated, so
+                   the raw probabilities are overconfident and the costs need to be sized to match.
+
+    This is a Viterbi pass over a 3-state chain. It replaces "average the probabilities over a
+    window" with "pay a fixed price per change", so it removes flicker without blurring genuine
+    handovers by half a window.
+    """
+    emit = np.asarray(log_probs, dtype=float) / temperature
+    n = len(emit)
+    restart = switch_dead if switch_restart is None else switch_restart
+    cost = np.array([[0.0, switch_team, switch_dead],      # cost[i, j]: from state i to state j
+                     [switch_team, 0.0, switch_dead],
+                     [restart, restart, 0.0]])
+    score = emit[0].copy()
+    back = np.empty((n, 3), dtype=np.int8)
+    for t in range(1, n):
+        cand = score[:, None] - cost          # cand[i, j]: be in i at t-1, move to j at t
+        best = cand.argmax(axis=0)
+        back[t] = best
+        score = cand[best, np.arange(3)] + emit[t]
+    path = np.empty(n, dtype=np.int8)
+    path[-1] = int(score.argmax())
+    for t in range(n - 1, 0, -1):
+        path[t - 1] = back[t, path[t]]
+    return path
+
+
 def run_lengths(codes):
     """[(start, stop, code)] constant runs, stop exclusive."""
     codes = np.asarray(codes)

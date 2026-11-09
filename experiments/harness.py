@@ -86,19 +86,43 @@ def score(gt, pred, bootstrap=BOOTSTRAP):
     }
 
 
-def cross_validate(make_method, feats, n_folds=N_FOLDS, embargo=EMBARGO, bootstrap=BOOTSTRAP):
-    """Out-of-fold predictions over the labelled window, and their official score.
+def out_of_fold(make_method, feats, gt, n_folds=N_FOLDS, embargo=EMBARGO, reverse=False):
+    """Out-of-fold predictions over the labelled window.
 
-    make_method is called once per fold, so no state leaks between folds. The whole-match
-    prediction of each fold's model is only read on that fold's test frames.
+    make_method is called once per fold. The whole-match prediction of each fold's model is only
+    read on that fold's test frames.
     """
-    gt = load_ground_truth()
     oof = np.full(len(gt), pm.X, dtype=np.int8)
-    for train, test in make_folds(gt, n_folds, embargo):
+    folds = make_folds(gt, n_folds, embargo)
+    for train, test in (folds[::-1] if reverse else folds):
         method = make_method()
         method.fit(feats, gt, train)
         oof[test] = np.asarray(method.predict(feats))[test]
-    return oof, score(gt, oof, bootstrap), gt
+    return oof
+
+
+def cross_validate(make_method, feats, n_folds=N_FOLDS, embargo=EMBARGO, bootstrap=BOOTSTRAP,
+                   check_leaks=True, reset=None):
+    """Out-of-fold predictions, their official score, and a fold-order leak check.
+
+    The check reruns the folds in reverse order and requires identical predictions. A method whose
+    answer on a fold depends on state left over from another fold (a cached model that saw this
+    fold's labels, say) changes when the order changes. A clean method does not. `reset` is called
+    before each pass and must clear any such state, otherwise the second pass inherits the first
+    pass's leftovers and the check proves nothing. Returns (oof, result, gt, leak_free) with
+    leak_free None when the check was skipped.
+    """
+    gt = load_ground_truth()
+    if reset:
+        reset()
+    oof = out_of_fold(make_method, feats, gt, n_folds, embargo)
+    leak_free = None
+    if check_leaks:
+        if reset:
+            reset()
+        leak_free = bool(np.array_equal(oof, out_of_fold(make_method, feats, gt, n_folds, embargo,
+                                                         reverse=True)))
+    return oof, score(gt, oof, bootstrap), gt, leak_free
 
 
 def apply_known_structure(codes):
