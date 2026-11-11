@@ -15,6 +15,7 @@ open dataset (Sportec/DFL, CC-BY 4.0). The provided match contributes only its t
 |---|---|
 | Provided tracking (ATD) of this match | Input at prediction time; also where the ball is unseen (41% of frames), copied onto the external matches so the model trains on the same kind of gaps. Labels never used. |
 | IDSSE open data, 7 matches (CC-BY 4.0) | Training and tuning. Provider ball-status / possession labels. Pitch oriented so the home team attacks +x in every half. |
+| SkillCorner open data (MIT; optional, `--with-skillcorner`) | A second training source: video-derived tracking with detected flags, labels from its phases of play. See DATASET_RESEARCH.md. |
 | Provided ground truth | **Not used for training, fitting, calibration or model selection.** Used only to report scores through the official evaluator (see "Disclosure"). |
 | Smart Tagging, video | Not used by the submitted model. |
 
