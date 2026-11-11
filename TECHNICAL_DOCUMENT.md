@@ -2,9 +2,9 @@
 
 ## Approach in one paragraph
 For every frame of the two halves we predict who has the ball (`H`, `A`) or that it is dead (`D`); frames outside the
-halves are `X`. A LightGBM classifier reads 78 permutation-invariant features of the tracking (who is near the ball, how
-the teams are shaped and moving, how the ball and the nearest player are moving, and the same signals 1 s and 3 s earlier
-and later). Training uses mirrored copies of the matches and weights the external frames by how much they resemble this
+halves are `X`. A LightGBM classifier reads 109 permutation-invariant features of the tracking (who is near the ball, how
+the teams are shaped and moving, how the ball and the nearest player are moving, how long ago each team last touched the ball, how often each team was
+nearest over the last and next few seconds, and the same signals 0.5 s to 5 s earlier and later). Training uses mirrored copies of the matches and weights the external frames by how much they resemble this
 match's tracking (inputs only). Its
 per-frame probabilities are smoothed (25-frame window) and runs shorter than 3 s are absorbed into their neighbours.
 **The model is trained, and every setting is chosen, on external data only**: the seven Bundesliga matches of the IDSSE
@@ -17,6 +17,9 @@ open dataset (Sportec/DFL, CC-BY 4.0). The provided match contributes only its t
 | IDSSE open data, 7 matches (CC-BY 4.0) | Training and tuning. Provider ball-status / possession labels. Pitch oriented so the home team attacks +x in every half. |
 | Provided ground truth | **Not used for training, fitting, calibration or model selection.** Used only to report scores through the official evaluator (see "Disclosure"). |
 | Smart Tagging, video | Not used by the submitted model. |
+
+Model families compared on the final features (leave-one-match-out): LightGBM 0.703, histogram gradient boosting 0.705 (a tie),
+random forest 0.690, extra trees 0.665, neural network 0.662, logistic regression 0.659; no blend beat LightGBM alone.
 
 Tried and dropped: Metrica sample games (loader exists, unused: no stated licence); learned HMM decoder (0.637 against 0.644);
 bidirectional GRU (0.580); 5-seed ensembles (no gain); LightGBM hyperparameter search (11 variants, none better than +0.006);
@@ -43,6 +46,7 @@ the other six too. spellF1 against the relabelled provider labels (ball gaps as 
 | + 12 motion (player velocity direction, ball carried with player, momentum) | 0.658 | 7 of 7 |
 | + mirrored training copies (top-bottom, and left-right with teams swapped) | 0.674 | 7 of 7 |
 | + input-only domain weighting toward this match's tracking | 0.688 | 7 of 7 |
+| + 31 temporal-context features (contact history, who-was-nearest shares, longer lags and leads), measured without domain weighting: 0.674 to 0.703 | 0.703 (unweighted; with domain weighting 0.699) | 7 of 7 |
 
 Per-match noise is about 0.035; each step improved most of the 7 matches. These scores are against provider-derived labels, so
 they are for comparing methods, not absolute predictions of the competition score.

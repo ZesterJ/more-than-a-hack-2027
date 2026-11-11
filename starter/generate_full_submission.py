@@ -34,7 +34,7 @@ from games import GAME, GAMES, asset_paths  # noqa: E402
 from tactical import decode_pipeline  # noqa: E402
 
 
-def predict_and_write(model, params, out_name, advanced=True, boundary=True, motion=True):
+def predict_and_write(model, params, out_name, advanced=True, boundary=True, motion=True, temporal=True):
     """Decode this match's two halves with an already-trained `model` and write the submission CSV."""
     n_frames = GAMES[GAME]["n_video_frames"]
     offsets, halves = GAMES[GAME]["offsets"], GAMES[GAME]["halves"]
@@ -42,7 +42,7 @@ def predict_and_write(model, params, out_name, advanced=True, boundary=True, mot
     trk = load_tracking(n_frames)
     is_home = team_of_each_track(asset_paths()["atd_meta"]) == 0
     trk = ext.orient_home_attacks_right(trk, is_home, spans)
-    X, aux = ep.featureset(trk, is_home, advanced, boundary, motion)
+    X, aux = ep.featureset(trk, is_home, advanced, boundary, motion, temporal)
 
     codes = np.full(n_frames, 3, dtype=np.int8)
     for a, b in spans:
@@ -53,16 +53,16 @@ def predict_and_write(model, params, out_name, advanced=True, boundary=True, mot
     return path
 
 
-def main(out_name, model_name, advanced=True, control_s=3.0, boundary=True, motion=True, augment=True, domain=True):
+def main(out_name, model_name, advanced=True, control_s=3.0, boundary=True, motion=True, augment=True, domain=True, temporal=True):
     sets = ep.load_idsse_sets(ep.ball_unseen_pattern(), advanced=advanced, control_s=control_s or None,
-                              boundary=boundary, motion=motion, augment=augment)
+                              boundary=boundary, motion=motion, augment=augment, temporal=temporal)
     weights = None
     if domain:  # weight the external frames to resemble this match's tracking (inputs only, no labels)
-        weights = ep.domain_weights(sets, ep.target_features(advanced, boundary, motion))
+        weights = ep.domain_weights(sets, ep.target_features(advanced, boundary, motion, temporal))
     posts = ep.lomo_posteriors(model_name, sets, weights)
     params, _ = ep.tune_decoder(posts, sets)
     print("decoder (leave-one-match-out on IDSSE): {}".format(params))
-    return predict_and_write(ep.fit(model_name, sets, weights=weights), params, out_name, advanced, boundary, motion)
+    return predict_and_write(ep.fit(model_name, sets, weights=weights), params, out_name, advanced, boundary, motion, temporal)
 
 
 if __name__ == "__main__":
@@ -73,10 +73,11 @@ if __name__ == "__main__":
     parser.add_argument("--control-s", type=float, default=3.0,
                         help="relabel IDSSE to controlled possession (runs shorter than this join the previous team); 0 = raw")
     parser.add_argument("--no-boundary", action="store_true", help="drop the 16 boundary features")
+    parser.add_argument("--no-temporal", action="store_true", help="drop the 31 temporal-context features")
     parser.add_argument("--no-motion", action="store_true", help="drop the 12 motion features")
     parser.add_argument("--no-domain", action="store_true", help="no input-only domain weighting of the external frames")
     parser.add_argument("--no-augment", action="store_true", help="train without mirrored copies of the matches")
     args = parser.parse_args()
     main(args.out, args.model, advanced=not args.base_features, control_s=args.control_s,
          boundary=not args.no_boundary, motion=not args.no_motion, augment=not args.no_augment,
-         domain=not args.no_domain)
+         domain=not args.no_domain, temporal=not args.no_temporal)

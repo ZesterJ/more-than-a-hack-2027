@@ -47,7 +47,7 @@ if not all(os.path.isfile(p) for m in ext.IDSSE_MATCHES for p in ext.idsse_files
 md("## 1. Load the seven matches")
 code("""
 sets = ep.load_idsse_sets(ep.ball_unseen_pattern(), advanced=True, control_s=3, boundary=True,
-                         motion=True, augment=True)  # 78 features, controlled-possession labels, mirrored copies for training
+                         motion=True, temporal=True, augment=True)  # 109 features, controlled-possession labels, mirrored copies for training
 def stats(m, d):
     y = d["y"]; sp = pm.possession_spells(y, pm.valid_runs(y)); L = np.array([(b - a) / 25 for a, b, _ in sp])
     return dict(match=m, frames=len(y), H=(y == 0).mean(), A=(y == 1).mean(), D=(y == 2).mean(),
@@ -86,7 +86,8 @@ md("""
 This match's tracking differs from the Bundesliga matches (the ball is unseen far more often, different tempo). A small
 classifier learns to tell external frames from this match's frames **using the tracking features alone, no labels**, and
 the external frames are weighted by how much they resemble this match. Weights are cross-fitted by match. Applies to the
-LightGBM family; accepted because it shrinks the input shift and does not lower the leave-one-match-out score.
+LightGBM family; kept because it shrinks the input shift (7 strongly shifted features become 1) and costs at most 0.01 of
+leave-one-match-out score (with the temporal features it is now 0.004 lower, so its benefit is mainly the smaller shift).
 """)
 code("""
 Xt = ep.target_features()
