@@ -352,7 +352,7 @@ def mirror_tracking(trk, mode):
 
 
 def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, control_s=None, boundary=False,
-                   motion=False, mirror=None, augment=False, temporal=False):
+                   motion=False, mirror=None, augment=False, temporal=False, loader=None):
     """{match: dict(X, aux, y, period, aug)}, oriented so the home team attacks +x, with `pattern` applied.
 
     `augment` also stores `aug`: (X, y) pairs of the same match mirrored top-to-bottom and left-to-right (with the
@@ -368,7 +368,7 @@ def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, con
 
     sets = {}
     for m in matches:
-        trk = ext.load_idsse(m)
+        trk = (loader or ext.load_idsse)(m)
         trk = ext.orient_home_attacks_right(trk, trk["is_home"], ext.period_segments(trk))
         if pattern is not None:
             trk = ext.apply_occlusion(trk, pattern)
