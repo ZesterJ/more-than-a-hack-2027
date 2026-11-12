@@ -106,3 +106,13 @@ def test_domain_weights_are_clipped_and_average_one_without_labels():
     w = ep.domain_weights(sets, rng.randn(600, 5) + 0.5)
     for m in sets:
         assert abs(w[m].mean() - 1.0) < 1e-6 and w[m].min() > 0
+
+
+def test_window_mean_and_temporal_block_are_finite_and_causal_where_named():
+    import numpy as np
+    import external_pipeline as ep
+    a = np.arange(10.0)
+    assert ep._window_mean(a, -2, 0)[5] == 4.0            # mean of a[3..5]
+    assert ep._window_mean(a, 0, 2)[5] == 6.0             # mean of a[5..7]
+    assert ep._window_mean(np.array([np.nan, 2.0, 4.0]), -1, 1)[0] == 2.0   # NaN-aware, edge truncated
+    assert len(ep.TEMPORAL) == 31 and len(set(ep.TEMPORAL)) == 31
