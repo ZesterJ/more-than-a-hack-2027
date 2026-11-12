@@ -23,7 +23,7 @@ sys.path.insert(0, ROOT)
 
 from experiments import harness  # noqa: E402
 from experiments.features import load_features  # noqa: E402
-from experiments.methods import REGISTRY  # noqa: E402
+from experiments.methods import REGISTRY, reset_caches  # noqa: E402
 
 LETTERS = np.array(["H", "A", "D", "X"])
 
@@ -52,6 +52,7 @@ def main():
     ap.add_argument("--embargo", type=int, default=harness.EMBARGO)
     ap.add_argument("--bootstrap", type=int, default=harness.BOOTSTRAP)
     ap.add_argument("--no-log", action="store_true", help="do not record this run as a trial")
+    ap.add_argument("--no-check", action="store_true", help="skip the fold-order leak check (halves the run time)")
     ap.add_argument("--save-oof", action="store_true",
                     help="write the out-of-fold predictions to evaluation/results/oof_<method>.csv")
     ap.add_argument("--write-submission", metavar="PATH",
@@ -72,7 +73,12 @@ def main():
     factory = lambda: REGISTRY[args.method](**params)  # noqa: E731
     feats = load_features()
 
-    oof, result, gt = harness.cross_validate(factory, feats, args.folds, args.embargo, args.bootstrap)
+    oof, result, gt, leak_free = harness.cross_validate(
+        factory, feats, args.folds, args.embargo, args.bootstrap, check_leaks=not args.no_check,
+        reset=reset_caches)
+    if leak_free is False:
+        raise SystemExit("LEAK: out-of-fold predictions change when the folds run in a different order, "
+                         "so a fold's prediction depends on state from another fold. Not logged.")
 
     pc = result["per_class"]
     print("{}({})  {}-fold, embargo {} frames, out-of-fold on the labelled window".format(
@@ -83,6 +89,8 @@ def main():
         result["macro_f1"], result["accuracy"], pc["H"], pc["A"], pc["D"]))
     print("  possessions: {} predicted vs {} true".format(
         result["n_pred_spells"], result["n_gt_spells"]))
+    if leak_free:
+        print("  fold-order leak check: passed")
 
     if not args.no_log:
         trial = harness.log_trial(args.method, params, args.folds, args.embargo, result)
@@ -104,8 +112,10 @@ def main():
         codes = harness.apply_known_structure(method.predict(feats))
         path = harness.write_submission(codes, args.write_submission)
         print("  wrote and validated", path)
-        print("  NOTE: this model was fit on all 7,500 labelled frames, so its score on them is "
-              "in-sample.\n        The cross-validated score above is the honest estimate.")
+        print("  NOTE: if this method trains on the Barcelona labels, the file was fit on all 7,500 "
+              "labelled frames and its score on them is in-sample.")
+        print("        The cross-validated score above is the honest estimate. "
+              "(A method with ext=[...] and barca_weight=0 never sees them.)")
 
 
 if __name__ == "__main__":
