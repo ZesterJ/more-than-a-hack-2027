@@ -61,6 +61,41 @@ logistic({'window': 50, 'min_dur': 60})  5-fold, embargo 150 frames, out-of-fold
 - **Possession count** next to the truth's 17 shows flicker (too many) or over-smoothing (too few).
 - **Trial count:** the more you try, the more the best score flatters you. The log makes that visible.
 
+## Training on external matches
+
+> The organisers' clarification forbids training, fitting or calibrating on the ground-truth possession
+> data, and requires tuning on external data. `harness.py` / `run.py` score methods on the public window
+> and log trials; **do not use their scores to choose between variants.** Use `lomo.py` (external matches
+> only) to choose, `make_submission.py` to build the file, and the official scorer once at the end. See
+> the first section of [FINDINGS.md](FINDINGS.md).
+
+
+Seven open Bundesliga matches (DFL / IDSSE, CC BY 4.0) give about 1M labelled frames, where the
+challenge gives 7,500. Their labels are built the way the challenge describes its own (dead where the
+ball status is 0, else the team in possession). Results, caveats and what did not work are in
+[FINDINGS.md](FINDINGS.md).
+
+```bash
+python -m experiments.download_idsse                       # ~2.6 GB into data/external/idsse (gitignored)
+python -m experiments.tune_external                        # choose decoding settings, leave-one-match-out
+python -m experiments.run gbdt 'ext=["J03WMX","J03WN1","J03WOH","J03WOY","J03WPY","J03WQQ","J03WR9"]' \
+    copies=2 'drop=["ball_speed"]' label_min_dur=50 decode=viterbi switch_team=20 switch_dead=20
+python -m experiments.stress_test gbdt <same parameters>   # score again with more of the ball hidden
+```
+
+Three things the code does that you would otherwise have to rediscover:
+
+- **Barcelona-style gaps are replayed onto the clean external data** (`external.corrupt`), because the
+  external ball is almost never missing and the Barcelona ball is missing on 41% of graded frames.
+- **Ball-speed features are dropped** (`drop=['ball_speed']`): the Bundesliga data freezes the ball
+  when it is dead, which teaches a cue that does not exist in the Barcelona tracking.
+- **Positions are put in one frame** (home attacks +x, read from each kickoff) so sources and halves
+  are comparable.
+
+The harness also runs a **fold-order leak check** on every run: it reruns the folds in reverse order and
+refuses to log a result that changes. It exists because a model cache once let a method train on the
+folds it was being tested on.
+
 ## Add your own method
 
 A method is any object with:
