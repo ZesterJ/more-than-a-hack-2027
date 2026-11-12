@@ -1,13 +1,26 @@
 {
-  "training_frames": 362359,
+  "training_frames": 572359,
   "matches_used": [
-    "SkillCorner_Barca_RealMadrid",
-    "SkillCorner_ManCity_Liverpool",
-    "SkillCorner_RealMadrid_Barca",
-    "SkillCorner_Liverpool_ManCity",
+    "Bundesliga_J03WMX",
+    "Bundesliga_J03WN1",
+    "Bundesliga_J03WOH",
+    "Bundesliga_J03WOY",
+    "Bundesliga_J03WPY",
+    "Bundesliga_J03WQQ",
+    "Bundesliga_J03WR9",
     "Metrica_1",
     "Metrica_2",
-    "Metrica_3"
+    "Metrica_3",
+    "SkillCorner_Barca_RealMadrid",
+    "SkillCorner_Liverpool_ManCity",
+    "SkillCorner_ManCity_Liverpool",
+    "SkillCorner_RealMadrid_Barca"
+  ],
+  "datasets": [
+    "SkillCorner_4matches",
+    "IDSSE_7matches_clean",
+    "IDSSE_7matches_masked41",
+    "Metrica_3games"
   ],
   "features": [
     "dist_to_boundary",
@@ -41,6 +54,16 @@
     "active_total",
     "active_roll_2s"
   ],
-  "created_at": "2026-11-05 22:54:42",
+  "default_decoder": {
+    "tau": 0.45,
+    "smooth_win": 15,
+    "hyst": [
+      0.32,
+      0.55
+    ],
+    "min_dead_frames": 50,
+    "min_live_frames": 25
+  },
+  "created_at": "2026-11-12 17:54:00",
   "rule_compliance": "Nov 3, 2026 Mandate (100% External Data, 0 Competition Match Frames)"
 }

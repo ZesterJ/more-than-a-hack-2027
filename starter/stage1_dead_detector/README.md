@@ -1,7 +1,7 @@
-# Stage 1 Dead-Ball Detector (Hierarchical Pipeline)
+# Stage 1 Dead-Ball Detector (Combined Hierarchical Gate)
 
 **More Than A Hack 2027: Tactical Ball Possession Prediction**  
-*Part of the Hierarchical Architecture: Stage 1 (Dead Gate) $\to$ Stage 2 (Possession Router)*
+*Combining PR #13 (5 Physical Pillars & Missing-Ball Resilience) + PR #14/16 (IDSSE 7-Match Corpus, 41% Ball-Gap Masking & Interval Temporal Filtering)*
 
 ---
 
@@ -11,20 +11,21 @@ This directory contains the production **Stage 1 Dead-Ball Detector** designed f
 
 ```mermaid
 flowchart LR
-    A["Tracking Frame<br/>(25 FPS)"] --> B["Stage 1 Dead Detector<br/>(5 Physical Pillars)"]
-    B --> C{"is_dead?"}
-    C -- "True (Dead)" --> D["Output: 'D'<br/>(Dead Ball)"]
-    C -- "False (Live)" --> E["Stage 2 Possession Router<br/>(Teammates' Model)"]
-    E --> F["Output: 'H' or 'A'"]
+    A["Tracking Frame<br/>(25 FPS)"] --> B["Stage 1 Dead Detector<br/>(5 Physical Pillars + 572k Frames)"]
+    B --> C["Smoothed Hysteresis (0.32/0.55)<br/>+ Duration Filter (50f/25f)"]
+    C --> D{"is_dead?"}
+    D -- "True (Dead)" --> E["Output: 'D'<br/>(Dead Ball)"]
+    D -- "False (Live)" --> F["Stage 2 Possession Router<br/>(Teammates' Model)"]
+    F --> G["Output: 'H' or 'A'"]
 ```
 
 ### Python Teammate Integration Example
 
 ```python
-import pandas as pd
+import numpy as np
 from starter.stage1_dead_detector.dead_detector import Stage1DeadDetector
 
-# 1. Initialize and load trained 5-booster ensemble
+# 1. Initialize and load trained 5-booster ensemble (572,359 external frames)
 detector = Stage1DeadDetector(model_dir='models/stage1_dead_detector')
 detector.load()
 
@@ -32,7 +33,8 @@ detector.load()
 prob_dead = detector.predict_proba(df_match)
 
 # 3. Predict filtered boolean gate (True = Dead, False = Live)
-is_dead = detector.predict_gate(df_match, tau=0.45, min_dead_frames=50, min_live_frames=25)
+# Defaults: smooth_win=15, hyst=(0.32, 0.55), min_dead_frames=50, min_live_frames=25
+is_dead = detector.predict_gate(df_match)
 
 # 4. Hand off to Stage 2 (Live frames only):
 live_indices = ~is_dead
@@ -43,56 +45,43 @@ team_preds[live_indices] = your_stage2_model.predict(X_team[live_indices])
 
 ---
 
-## 2. Benchmark Across All 7 Matches (362,359 Frames)
+## 2. Combined 11-Fold LOMO Benchmark (SkillCorner + IDSSE Clean & 41% Gap-Masked)
 
-Evaluated via strict Leave-One-Match-Out (LOMO) cross-validation where the test match was **never seen during training**:
+Evaluated via strict Leave-One-Match-Out (LOMO) cross-validation where the held-out match (both clean and 41% gap-masked copies) was **never seen during training**:
 
-| Match Identifier | Stadium / Competition | Frames | ROC-AUC | Frame Accuracy | Alive/Dead F1 (Official) | Dead F1 | Dead Precision | Dead Recall |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **SkillCorner 2841** (Barca vs Real Madrid) | Camp Nou (LaLiga) | 68,400 | **0.9662** | **90.50%** | **0.9187** | **0.8857** | 0.9180 | 0.8556 |
-| **SkillCorner 4039** (Man City vs Liverpool) | Etihad Stadium (EPL) | 68,316 | **0.9614** | **90.03%** | **0.9065** | **0.8932** | 0.8933 | 0.8931 |
-| **SkillCorner 3442** (Real Madrid vs Barca) | Bernabéu / Di Stéfano | 66,972 | **0.9653** | **90.96%** | **0.9248** | **0.8865** | 0.9103 | 0.8639 |
-| **SkillCorner 2440** (Liverpool vs Man City) | Anfield (EPL) | 68,671 | **0.9633** | **91.36%** | **0.9191** | **0.9073** | 0.9154 | 0.8993 |
-| **Metrica Sports Game 1** | Optical Exhibition | 30,000 | 0.8014 | **91.67%** | **0.9562** | 0.1356 | 0.5681 | 0.0770 |
-| **Metrica Sports Game 2** | Optical Exhibition | 30,000 | 0.7925 | **93.89%** | **0.9685** | 0.0000 | 0.0000 | 0.0000 |
-| **Metrica Sports Game 3** | Optical Exhibition | 30,000 | 0.6921 | **96.54%** | **0.9824** | 0.0000 | 0.0000 | 0.0000 |
-| **OVERALL 7-MATCH MEAN** | **362,359 frames** | **362,359** | **0.8775** | **92.13%** | **0.9395** | **0.5297** | **0.6007** | **0.5127** |
+| Domain | Temporal Filter | ROC-AUC | Dead P | Dead R | Dead F1 | Binary Macro F1 | Dead Int F1@0.5 | Mean Int F1 (0.3–0.7) | False-DEAD Bursts |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **SkillCorner** (~52% ball gaps) | `raw_0.45` | 0.9647 | 0.8898 | 0.8972 | 0.8934 | 0.9038 | 0.3575 | 0.3433 | 95.2 |
+| **SkillCorner** (~52% ball gaps) | `PR14_d9_l0` | 0.9647 | 0.8942 | 0.8928 | 0.8934 | 0.9042 | 0.5353 | 0.5141 | 37.2 |
+| **SkillCorner** (~52% ball gaps) | `PR13_d50_l25` | 0.9647 | 0.9080 | 0.8765 | 0.8918 | 0.9040 | 0.7118 | 0.6762 | **13.0** |
+| **SkillCorner** (~52% ball gaps) | **`hyst_d50_l25`** | **0.9647** | 0.8917 | **0.8982** | **0.8947** | **0.9049** | **0.7355** | **0.7053** | 13.5 |
+| **IDSSE Clean** (0% ball gaps) | `raw_0.45` | 0.9677 | 0.9698 | 0.7851 | 0.8624 | 0.8942 | 0.3840 | 0.3913 | 13.3 |
+| **IDSSE Clean** (0% ball gaps) | `PR14_d9_l0` | 0.9677 | 0.9771 | 0.7833 | 0.8641 | 0.8955 | 0.6023 | 0.6148 | 2.0 |
+| **IDSSE Clean** (0% ball gaps) | **`hyst_d50_l25`** | **0.9677** | 0.9821 | **0.7913** | **0.8713** | **0.9017** | **0.7649** | **0.7758** | **0.0** |
+| **IDSSE 41%-Masked** (stress test) | `raw_0.45` | 0.9139 | 0.8854 | 0.7109 | 0.7839 | 0.8346 | 0.1165 | 0.1130 | 29.7 |
+| **IDSSE 41%-Masked** (stress test) | `PR14_d9_l0` | 0.9139 | 0.8971 | 0.7061 | 0.7854 | 0.8362 | 0.1687 | 0.1642 | 11.1 |
+| **IDSSE 41%-Masked** (stress test) | **`hyst_d50_l25`** | **0.9139** | 0.9292 | **0.7316** | **0.8121** | **0.8558** | **0.5228** | **0.5251** | **1.4** |
 
-*Note on Metrica: Metrica sample matches only have 2–8% tagged dead balls (mostly major game stoppages), resulting in high alive accuracy (92–96%). On European tracking matches with complete event streams (SkillCorner), ROC-AUC is consistently 0.961–0.966 and Dead F1 is ~0.89–0.91.*
-
----
-
-## 3. The 5 Physical Pillars of Dead-Ball Features
-
-The model uses 30 features structured into 5 physical domains:
-
-1. **Pitch Boundary Violations**:
-   - `dist_to_boundary`: $\min(x, 105 - x, y, 68 - y)$
-   - `is_out_of_bounds`: $\mathbb{I}(\text{dist\_to\_boundary} < 0.0)$
-   - `boundary_roll_1s`: rolling mean of boundary violation over 25 frames
-2. **Whole-Pitch Collective Kinetics (Whistle Signature)**:
-   - `speed_all_roll_2s`: rolling mean speed of all 22 outfield players
-   - `pitch_decel_2s`: 2-second rate of pitch-wide deceleration
-   - `is_collective_walking`: $\mathbb{I}(\text{speed\_all\_roll\_2s} < 1.25\text{ m/s})$
-3. **Missing Ball Tracking Persistence**:
-   - `consecutive_missing`: count of contiguous frames where ball is lost
-   - `missing_over_1s`, `missing_over_3s`
-   - `missing_ratio_roll_5s`: rolling 5-second window
-4. **Tactical Team Dispersion Expansion**:
-   - `total_spread_area`: $(\text{home\_spread}_x \cdot \text{home\_spread}_y) + (\text{away\_spread}_x \cdot \text{away\_spread}_y)$
-   - `spread_area_roll_2s`: captures teams disbanding into wide disorganization during stoppages
-5. **Player-to-Ball Physical Isolation**:
-   - `min_dist_any`: $\min(d_{\text{min\_home}}, d_{\text{min\_away}})$
-   - `min_dist_roll_3s`: 3-second rolling minimum player distance
-   - `ball_isolated_5m`, `ball_isolated_10m`
+### Why `hyst_d50_l25` Wins Across Every Domain
+- **Eliminates false bursts on noisy broadcast data**: Cuts internal false-DEAD bursts from `95.2` $\to$ `13.5` on SkillCorner (`37.2` with PR #14's 9-frame filter) and from `13.3` $\to$ **`0.0`** on clean IDSSE.
+- **4.5x higher Interval F1 under 41% ball dropouts**: On `IDSSE_Masked41`, `hyst_d50_l25` jumps from `0.1165` (raw) and `0.1687` (PR #14) up to **`0.5228` Dead Interval F1@0.5** and **`0.8121` Dead Frame F1**.
 
 ---
 
-## 4. Stoppage Duration Filtering
+## 3. Production Training Corpus (572,359 Frames, 100% External)
 
-Under the Laws of the Game, dead-ball events (throw-ins, free kicks, goal kicks) cannot physically last 0.2s (5 frames). 
-`apply_stoppage_duration_filter` enforces:
-- **Minimum Dead Stoppage**: 50 frames (2.0s)
-- **Minimum Live Touch**: 25 frames (1.0s)
+Trained via `python starter/stage1_dead_detector/train_stage1_detector.py` on:
+1. **SkillCorner 4 European Matches** (`272,359` frames; real broadcast ~52% ball gaps)
+2. **IDSSE 7 Bundesliga Matches (Clean)** (`105,000` frames; TRACAB optical tracking)
+3. **IDSSE 7 Bundesliga Matches (41% Ball-Gap Masked)** (`105,000` frames; simulated broadcast dropouts)
+4. **Metrica Sports 3 Matches** (`90,000` frames; optical exhibition tracking)
 
-This prevents mid-spell false chops and protects **Spell F1**.
+---
+
+## 4. The 5 Physical Pillars of Dead-Ball Features (30 Features)
+
+1. **Pitch Boundary Violations**: `dist_to_boundary`, `is_out_of_bounds`, `near_boundary_1m`, `boundary_roll_1s`.
+2. **Whole-Pitch Collective Kinetics (Whistle Signature)**: `speed_all_roll_2s`, `pitch_decel_2s`, `is_collective_walking`, `walking_roll_2s`.
+3. **Missing Ball Tracking Persistence**: `ball_missing`, `consecutive_missing`, `missing_over_1s`, `missing_over_3s`, `missing_ratio_roll_2s`, `missing_ratio_roll_5s`.
+4. **Tactical Team Dispersion Expansion**: `home_spread_x/y`, `away_spread_x/y`, `total_spread_area`, `spread_area_roll_2s`.
+5. **Player-to-Ball Physical Isolation & Coverage**: `min_dist_any`, `min_dist_roll_1s/3s/5s`, `ball_isolated_5m/10m`, `players_within_3m_total`, `players_3m_roll_1s`, `active_total`, `active_roll_2s`.

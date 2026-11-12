@@ -9,7 +9,7 @@ Implements the 5 Physical Pillars of Dead-Ball Detection:
 3. Tracking Occlusion Persistence (consecutive_missing, missing_over_2s, missing_ratio_roll_5s)
 4. Tactical Team Dispersion Expansion (spread_area_roll_2s, home_spread, away_spread)
 5. Player-to-Ball Physical Isolation (min_dist_any, min_dist_roll_3s, ball_isolated_5m)
-+ Football Stoppage Duration Filtering (min 50 frames / 2.0s)
++ Smoothed Dual-Threshold Hysteresis & Football Stoppage Duration Filtering (50f/25f)
 """
 
 import os
@@ -37,6 +37,7 @@ DEAD_FEATURE_SCHEMA = [
     'active_total', 'active_roll_2s'
 ]
 
+
 def add_dead_physics_features(df):
     """Compute the 5 physical pillars of Stage 1 Dead-Ball detection."""
     df = df.copy()
@@ -54,7 +55,7 @@ def add_dead_physics_features(df):
     dist_right = 105.0 - bx
     dist_bottom = by
     dist_top = 68.0 - by
-    
+
     df['dist_to_boundary'] = np.minimum(
         np.minimum(dist_left, dist_right),
         np.minimum(dist_bottom, dist_top)
@@ -67,7 +68,7 @@ def add_dead_physics_features(df):
     if 'speed_all_roll_2s' not in df.columns or df['speed_all_roll_2s'].isna().all():
         df['speed_all_roll_2s'] = df.get('overall_speed', pd.Series(1.5, index=df.index))
     df['speed_all_roll_2s'] = df['speed_all_roll_2s'].fillna(1.5)
-    
+
     pitch_speed = df['speed_all_roll_2s'].values
     df['pitch_decel_2s'] = pd.Series(pitch_speed).diff(50).fillna(0).values
     df['is_collective_walking'] = (df['speed_all_roll_2s'] < 1.25).astype(float)
@@ -122,6 +123,7 @@ def add_dead_physics_features(df):
 
     return df
 
+
 def apply_stoppage_duration_filter(is_dead_preds, min_dead_frames=50, min_live_frames=25):
     """
     Apply football domain physics:
@@ -130,7 +132,7 @@ def apply_stoppage_duration_filter(is_dead_preds, min_dead_frames=50, min_live_f
     """
     n = len(is_dead_preds)
     out = np.array(is_dead_preds, dtype=int, copy=True)
-    
+
     # Pass 1: Remove short dead blips (< min_dead_frames)
     i = 0
     while i < n:
@@ -162,8 +164,10 @@ def apply_stoppage_duration_filter(is_dead_preds, min_dead_frames=50, min_live_f
 
     return out
 
+
 class Stage1DeadDetector:
     """Production Stage 1 Dead-Ball Gate for Hierarchical Possession Models."""
+
     def __init__(self, model_dir='models/stage1_dead_detector'):
         self.model_dir = model_dir
         self.models = []
@@ -195,13 +199,29 @@ class Stage1DeadDetector:
         probs /= len(self.models)
         return probs
 
-    def predict_gate(self, df, tau=0.45, min_dead_frames=50, min_live_frames=25):
+    def predict_gate(self, df, tau=0.45, min_dead_frames=50, min_live_frames=25, smooth_win=15, hyst=(0.32, 0.55)):
         """
         Return boolean array: True = Dead Ball, False = Live Ball.
-        Applies threshold gating followed by football duration filtering.
+        Uses smoothed probabilities + dual-threshold hysteresis + football stoppage duration filtering
+        (selected via external LOMO benchmark across SkillCorner + IDSSE Clean & 41%-Masked).
         """
         prob_dead = self.predict_proba(df)
-        raw_dead = (prob_dead >= tau).astype(int)
+        p = pd.Series(prob_dead).rolling(smooth_win, min_periods=1, center=True).mean().values if smooth_win > 1 else prob_dead
+
+        if hyst is not None:
+            lo, hi = hyst
+            raw_dead = np.zeros(len(p), dtype=int)
+            state = int(p[0] >= tau)
+            raw_dead[0] = state
+            for i in range(1, len(p)):
+                if state == 1 and p[i] <= lo:
+                    state = 0
+                elif state == 0 and p[i] >= hi:
+                    state = 1
+                raw_dead[i] = state
+        else:
+            raw_dead = (p >= tau).astype(int)
+
         filtered_dead = apply_stoppage_duration_filter(
             raw_dead,
             min_dead_frames=min_dead_frames,
