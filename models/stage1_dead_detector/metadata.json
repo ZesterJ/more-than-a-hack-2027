@@ -1,0 +1,69 @@
+{
+  "training_frames": 482359,
+  "matches_used": [
+    "Bundesliga_J03WMX",
+    "Bundesliga_J03WN1",
+    "Bundesliga_J03WOH",
+    "Bundesliga_J03WOY",
+    "Bundesliga_J03WPY",
+    "Bundesliga_J03WQQ",
+    "Bundesliga_J03WR9",
+    "SkillCorner_Barca_RealMadrid",
+    "SkillCorner_Liverpool_ManCity",
+    "SkillCorner_ManCity_Liverpool",
+    "SkillCorner_RealMadrid_Barca"
+  ],
+  "datasets": [
+    "SkillCorner_4matches",
+    "IDSSE_7matches_clean",
+    "IDSSE_7matches_masked41"
+  ],
+  "features": [
+    "dist_to_boundary",
+    "is_out_of_bounds",
+    "near_boundary_1m",
+    "boundary_roll_1s",
+    "speed_all_roll_2s",
+    "pitch_decel_2s",
+    "is_collective_walking",
+    "walking_roll_2s",
+    "ball_missing",
+    "consecutive_missing",
+    "missing_over_1s",
+    "missing_over_3s",
+    "missing_ratio_roll_2s",
+    "missing_ratio_roll_5s",
+    "home_spread_x",
+    "home_spread_y",
+    "away_spread_x",
+    "away_spread_y",
+    "total_spread_area",
+    "spread_area_roll_2s",
+    "min_dist_any",
+    "min_dist_roll_1s",
+    "min_dist_roll_3s",
+    "min_dist_roll_5s",
+    "ball_isolated_5m",
+    "ball_isolated_10m",
+    "players_within_3m_total",
+    "players_3m_roll_1s",
+    "active_total",
+    "active_roll_2s",
+    "spread_delta_fwd_2s",
+    "dist_delta_fwd_2s",
+    "missing_delta_fwd_2s",
+    "players3m_delta_fwd_2s"
+  ],
+  "default_decoder": {
+    "tau": 0.38,
+    "smooth_win": 25,
+    "hyst": [
+      0.25,
+      0.45
+    ],
+    "min_dead_frames": 50,
+    "min_live_frames": 25
+  },
+  "created_at": "2026-11-12 18:12:33",
+  "rule_compliance": "Nov 3, 2026 Mandate (100% External Data, 0 Competition Match Frames)"
+}

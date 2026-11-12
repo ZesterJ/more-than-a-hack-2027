@@ -66,3 +66,5 @@ env/
 
 # -- teammates' research notes (local reference only) ---------------------------------------
 REFERENCES/
+catboost_info/
+scratch/
