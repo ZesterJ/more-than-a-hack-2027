@@ -43,11 +43,43 @@ import external_pipeline as ep
 pd.set_option("display.width", 200)
 if not all(os.path.isfile(p) for m in ext.IDSSE_MATCHES for p in ext.idsse_files(m).values()):
     ext.fetch_idsse()
+
+# Slow results (posteriors, domain weights) are kept on disk, so re-running a cell, or the notebook after a kernel
+# restart, takes seconds instead of minutes. The key includes the pipeline's source code, so editing it recomputes.
+import hashlib, pickle
+CACHE = os.path.join(ROOT, "data", "cache", "nb04")
+os.makedirs(CACHE, exist_ok=True)
+CODE_TAG = hashlib.sha1(b"".join(open(os.path.join(ROOT, "starter", f), "rb").read() for f in
+                                 ("external_pipeline.py", "external.py", "features.py", "benchmark.py", "tactical.py"))).hexdigest()[:10]
+
+def cached(name, compute):
+    path = os.path.join(CACHE, "%s_%s.pkl" % (name, CODE_TAG))
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            return pickle.load(f)
+    out = compute()
+    with open(path, "wb") as f:
+        pickle.dump(out, f)
+    return out
+
+def need(name, section):
+    if name not in globals():
+        raise RuntimeError("`%s` is not defined yet: run the cell in section %s first (or Run All)." % (name, section))
+
+def data_tag():
+    \"\"\"Fingerprint of the loaded feature matrices, so changing the feature settings in section 1 recomputes.\"\"\"
+    need("sets", "1")
+    sample = np.vstack([d["X"][::4999] for d in sets.values()])
+    return hashlib.sha1(np.ascontiguousarray(sample).tobytes()).hexdigest()[:8]
+
+def posteriors(name, weights=None, tag=""):
+    \"\"\"Leave-one-match-out posteriors for one model family, computed once and then read from disk.\"\"\"
+    return cached("posts_%s%s_%s" % (name, tag, data_tag()), lambda: ep.lomo_posteriors(name, sets, weights))
 """)
 md("## 1. Load the seven matches")
 code("""
 sets = ep.load_idsse_sets(ep.ball_unseen_pattern(), advanced=True, control_s=3, boundary=True,
-                         motion=True, augment=True)  # 78 features, controlled-possession labels, mirrored copies for training
+                         motion=True, temporal=True, augment=True)  # 109 features, controlled-possession labels, mirrored copies for training
 def stats(m, d):
     y = d["y"]; sp = pm.possession_spells(y, pm.valid_runs(y)); L = np.array([(b - a) / 25 for a, b, _ in sp])
     return dict(match=m, frames=len(y), H=(y == 0).mean(), A=(y == 1).mean(), D=(y == 2).mean(),
@@ -57,8 +89,8 @@ pd.DataFrame([stats(m, d) for m, d in sets.items()]).round(3)
 md("## 2. Leave-one-match-out posteriors for each model family")
 code("""
 POSTS, t = {}, time.time()
-for name in ep.MODELS:
-    POSTS[name] = ep.lomo_posteriors(name, sets); print(name, round(time.time() - t), "s")
+for name in ep.MODELS:      # first run: about 1 min for LightGBM, several minutes for the two logistic models
+    POSTS[name] = posteriors(name); print(name, round(time.time() - t), "s")
 """)
 md("""
 ## 3. Tune the decoder on external predictions; compare models
@@ -67,6 +99,8 @@ predictions. Means and standard deviations are over the seven matches (a match i
 300-500 provider-labelled possessions each).
 """)
 code("""
+need("sets", "1")
+POSTS = {name: posteriors(name) for name in ep.MODELS}   # instant if section 2 already ran
 TUNED, rows, details = {}, [], {}
 for name in ep.MODELS:
     joint, table = ep.tune_decoder(POSTS[name], sets); TUNED[name] = joint; details[name] = pd.DataFrame(table)
@@ -77,6 +111,7 @@ board = pd.DataFrame(rows).sort_values("tuned_on_others", ascending=False).reset
 board.round(3)
 """)
 code("""
+need("board", "3")
 best = board.model.iloc[0]
 print("selected on external data only:", best)
 details[best].round(3)
@@ -86,17 +121,19 @@ md("""
 This match's tracking differs from the Bundesliga matches (the ball is unseen far more often, different tempo). A small
 classifier learns to tell external frames from this match's frames **using the tracking features alone, no labels**, and
 the external frames are weighted by how much they resemble this match. Weights are cross-fitted by match. Applies to the
-LightGBM family; accepted because it shrinks the input shift and does not lower the leave-one-match-out score.
+LightGBM family; kept because it shrinks the input shift (7 strongly shifted features become 1) and costs at most 0.01 of
+leave-one-match-out score (with the temporal features it is now 0.004 lower, so its benefit is mainly the smaller shift).
 """)
 code("""
-Xt = ep.target_features()
-W = ep.domain_weights(sets, Xt)
+need("sets", "1"); need("details", "3")
+Xt = cached("target_features_" + data_tag(), ep.target_features)
+W = cached("domain_weights_" + data_tag(), lambda: ep.domain_weights(sets, Xt))
 Xs = np.vstack([d["X"][::6] for d in sets.values()]); ws = np.concatenate([W[m][::6] for m in sets])
 smd = lambda mu: np.abs(Xt.mean(0) - mu) / (Xs.std(0) + 1e-9)
 before, after = smd(Xs.mean(0)), smd((Xs * ws[:, None]).sum(0) / ws.sum())
 print("features shifted by > 0.3 sd:  before %d  after %d   (effective sample size %.0f%%)" %
       ((before > .3).sum(), (after > .3).sum(), 100 * ws.sum() ** 2 / (ws ** 2).sum() / len(ws)))
-POSTS_W = ep.lomo_posteriors("lightgbm", sets, W)
+POSTS_W = posteriors("lightgbm", W, tag="_domain")
 joint_w, table_w = ep.tune_decoder(POSTS_W, sets)
 pd.DataFrame([dict(model="lightgbm", weighting="none", tuned_on_others=details["lightgbm"].tuned_on_others.mean()),
               dict(model="lightgbm", weighting="domain", tuned_on_others=pd.DataFrame(table_w).tuned_on_others.mean())]).round(3)
@@ -111,6 +148,7 @@ models, weights or settings.
 code("""
 import subprocess
 from generate_full_submission import predict_and_write
+need("best", "3"); need("W", "3b"); need("joint_w", "3b")
 use_w = best == "lightgbm"      # domain weighting applies to the LightGBM family
 params = joint_w if use_w else TUNED[best]
 path = predict_and_write(ep.fit(best, sets, weights=W if use_w else None), params, "ext_%s.csv" % best)

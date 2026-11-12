@@ -209,7 +209,92 @@ def motion_block(trk, is_home, X22, E):
     return np.nan_to_num(np.column_stack([a[k] for k in MOTION]).astype(np.float32))
 
 
-def featureset(trk, is_home, advanced=False, boundary=False, motion=False):
+TEMPORAL = [
+    "nhf_past_1s", "nhf_past_3s", "nhf_past_5s", "nhf_fut_1s", "nhf_fut_3s", "nhf_fut_5s", "nhf_c10s",
+    "team_flips_3s", "team_flips_10s",
+    "since_contact_home", "since_contact_away", "until_contact_home", "until_contact_away",
+    "ball_path_1s", "ball_path_3s", "ball_straight_3s",
+    "still_frac_2s", "still_frac_5s", "speed_trend_3s",
+    "d_margin_lag05s", "d_margin_lead05s", "d_margin_lag2s", "d_margin_lead2s", "d_margin_lag5s", "d_margin_lead5s",
+    "d_min_lag3s", "d_min_lead3s",
+    "ball_spd_lag1s", "ball_spd_lead1s", "ball_spd_lag3s", "ball_spd_lead3s",
+]
+
+
+def _window_mean(a, lo, hi):
+    """NaN-aware mean of a[t+lo .. t+hi] (lo <= hi, in frames; negative = past), edges truncated."""
+    n = len(a)
+    ok = ~np.isnan(a)
+    csum = np.concatenate(([0.0], np.cumsum(np.where(ok, a, 0.0))))
+    ccnt = np.concatenate(([0], np.cumsum(ok)))
+    idx = np.arange(n)
+    a0, b0 = np.clip(idx + lo, 0, n), np.clip(idx + hi + 1, 0, n)
+    cnt = ccnt[b0] - ccnt[a0]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(cnt > 0, (csum[b0] - csum[a0]) / np.maximum(cnt, 1), np.nan)
+
+
+def temporal_block(trk, is_home, X22, E):
+    """Longer-range temporal context: how the nearest team, contact history, ball path and team stillness evolve over
+    0.5 - 10 s before and after each frame (the match is processed offline, so looking ahead is allowed). Includes the
+    share of recent / upcoming frames in which each team was nearest to the ball (a distance-based possession proxy).
+    Nothing here reads labels."""
+    length, width = GAMES[GAME]["pitch"]
+    P, B = trk["players"], trk["ball"]
+    n = len(B)
+    idx = np.arange(n)
+    px, py, ps = P[:, :, 0] * length, P[:, :, 1] * width, P[:, :, 2]
+    bx, by = B[:, 0] * length, B[:, 1] * width
+    missing = np.isnan(bx)
+    bxf = pd.Series(bx).ffill().bfill().fillna(length / 2).values
+    byf = pd.Series(by).ffill().bfill().fillna(width / 2).values
+    dist = np.hypot(px - bx[:, None], py - by[:, None])
+    inf = np.where(np.isnan(dist), np.inf, dist)
+    d_home = np.minimum(np.where(is_home[None, :], inf, np.inf).min(1), 30.0)
+    d_away = np.minimum(np.where(~is_home[None, :], inf, np.inf).min(1), 30.0)
+    dm, dmin = X22.d_margin.values, E.d_min.values
+    a = {}
+    # distance-based possession proxy: share of frames in a window in which the home side was nearest
+    nh = np.where(missing, np.nan, (dm > 0).astype(float))
+    for name, lo, hi in (("nhf_past_1s", -FPS, 0), ("nhf_past_3s", -3 * FPS, 0), ("nhf_past_5s", -5 * FPS, 0),
+                         ("nhf_fut_1s", 0, FPS), ("nhf_fut_3s", 0, 3 * FPS), ("nhf_fut_5s", 0, 5 * FPS),
+                         ("nhf_c10s", -5 * FPS, 5 * FPS)):
+        a[name] = np.nan_to_num(_window_mean(nh, lo, hi), nan=0.5)
+    held = pd.Series(nh).ffill().bfill().fillna(0.5).values
+    flips = (np.abs(np.diff(held, prepend=held[:1])) > 0).astype(float)
+    a["team_flips_3s"] = _window_mean(flips, -3 * FPS // 2, 3 * FPS // 2) * 3 * FPS
+    a["team_flips_10s"] = _window_mean(flips, -5 * FPS, 5 * FPS) * 10 * FPS
+    cap = 10 * FPS
+    for team, d in (("home", d_home), ("away", d_away)):
+        near = d < 1.5
+        last = np.maximum.accumulate(np.where(near, idx, -10 ** 9))
+        a["since_contact_" + team] = np.minimum(idx - last, cap) / FPS
+        nxt = np.minimum.accumulate(np.where(near, idx, 10 ** 9)[::-1])[::-1]
+        a["until_contact_" + team] = np.minimum(nxt - idx, cap) / FPS
+    step = np.hypot(np.diff(bxf, prepend=bxf[:1]), np.diff(byf, prepend=byf[:1]))
+    step = np.where(missing, 0.0, np.minimum(step, 3.0))
+    a["ball_path_1s"] = _window_mean(step, -FPS // 2, FPS // 2) * FPS
+    a["ball_path_3s"] = _window_mean(step, -3 * FPS // 2, 3 * FPS // 2) * 3 * FPS
+    half = int(1.5 * FPS)
+    net = np.hypot(_shift(bxf, -half) - _shift(bxf, half), _shift(byf, -half) - _shift(byf, half))
+    a["ball_straight_3s"] = np.minimum(net / np.maximum(a["ball_path_3s"], 1e-3), 1.5)
+    with np.errstate(all="ignore"):
+        still = np.nanmean(np.where(np.isnan(ps), np.nan, (ps < 0.5).astype(float)), axis=1)
+    still = np.nan_to_num(still, nan=0.0)
+    a["still_frac_2s"], a["still_frac_5s"] = _window_mean(still, -FPS, FPS), _window_mean(still, -5 * FPS // 2, 5 * FPS // 2)
+    spd = X22.overall_speed.values
+    a["speed_trend_3s"] = _window_mean(spd, -FPS, 0) - _window_mean(_shift(spd, 2 * FPS), -FPS, 0)
+    for name, k in (("d_margin_lag05s", FPS // 2), ("d_margin_lead05s", -(FPS // 2)), ("d_margin_lag2s", 2 * FPS),
+                    ("d_margin_lead2s", -2 * FPS), ("d_margin_lag5s", 5 * FPS), ("d_margin_lead5s", -5 * FPS)):
+        a[name] = _shift(dm, k)
+    a["d_min_lag3s"], a["d_min_lead3s"] = _shift(dmin, 3 * FPS), _shift(dmin, -3 * FPS)
+    bspd = np.where(missing, 0.0, np.minimum(step * FPS, 40.0))
+    for name, k in (("ball_spd_lag1s", FPS), ("ball_spd_lead1s", -FPS), ("ball_spd_lag3s", 3 * FPS), ("ball_spd_lead3s", -3 * FPS)):
+        a[name] = _shift(bspd, k)
+    return np.nan_to_num(np.column_stack([a[k] for k in TEMPORAL]).astype(np.float32))
+
+
+def featureset(trk, is_home, advanced=False, boundary=False, motion=False, temporal=False):
     """(X, aux): 30 model features (+20 advanced ones if asked) and the per-frame arrays the decoder rules need."""
     X22 = build_features(trk, is_home=is_home)
     E = build_extra(trk, X22)
@@ -224,6 +309,8 @@ def featureset(trk, is_home, advanced=False, boundary=False, motion=False):
         X = np.hstack([X, boundary_block(trk, is_home, X22, E)])
     if motion:
         X = np.hstack([X, motion_block(trk, is_home, X22, E)])
+    if temporal:
+        X = np.hstack([X, temporal_block(trk, is_home, X22, E)])
     return X, aux
 
 
@@ -265,7 +352,7 @@ def mirror_tracking(trk, mode):
 
 
 def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, control_s=None, boundary=False,
-                   motion=False, mirror=None, augment=False):
+                   motion=False, mirror=None, augment=False, temporal=False, loader=None):
     """{match: dict(X, aux, y, period, aug)}, oriented so the home team attacks +x, with `pattern` applied.
 
     `augment` also stores `aug`: (X, y) pairs of the same match mirrored top-to-bottom and left-to-right (with the
@@ -273,7 +360,7 @@ def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, con
     def build(trk, mode):
         if mode:
             trk = mirror_tracking(trk, mode)
-        X, aux = featureset(trk, trk["is_home"], advanced, boundary, motion)
+        X, aux = featureset(trk, trk["is_home"], advanced, boundary, motion, temporal)
         y = trk["labels"]
         if control_s:  # relabel to "controlled possession": runs under control_s seconds join the previous team
             y = controlled_possession(y, int(control_s * FPS))
@@ -281,7 +368,7 @@ def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, con
 
     sets = {}
     for m in matches:
-        trk = ext.load_idsse(m)
+        trk = (loader or ext.load_idsse)(m)
         trk = ext.orient_home_attacks_right(trk, trk["is_home"], ext.period_segments(trk))
         if pattern is not None:
             trk = ext.apply_occlusion(trk, pattern)
@@ -309,7 +396,7 @@ MODELS = {
 }
 
 
-def target_features(advanced=True, boundary=True, motion=True, step=6):
+def target_features(advanced=True, boundary=True, motion=True, temporal=True, step=6):
     """Features of the *provided* match (both halves, inputs only, no labels): the target domain for weighting."""
     from baseline import team_of_each_track
     from features import load_tracking
@@ -320,7 +407,7 @@ def target_features(advanced=True, boundary=True, motion=True, step=6):
     trk = load_tracking(n_frames)
     is_home = team_of_each_track(asset_paths()["atd_meta"]) == 0
     trk = ext.orient_home_attacks_right(trk, is_home, spans)
-    X, _ = featureset(trk, is_home, advanced, boundary, motion)
+    X, _ = featureset(trk, is_home, advanced, boundary, motion, temporal)
     return np.vstack([X[a:b][::step] for a, b in spans])
 
 
