@@ -2,11 +2,13 @@
 Train Combined Production Stage 1 Dead-Ball Detector Ensemble
 Strict Compliance with Nov 3 Rule Mandate (100% External Data)
 
-Trains a 5-seed diversity LightGBM ensemble on 572,359 external frames across 14 matches:
+Trains a 5-seed diversity LightGBM ensemble on 482,359 external frames across 11 unique matches:
 - SkillCorner 4 European Matches (272,359 frames; real broadcast ~52% ball gaps)
 - IDSSE 7 Bundesliga Matches Clean (105,000 frames; TRACAB optical tracking)
 - IDSSE 7 Bundesliga Matches 41% Ball-Gap Masked (105,000 frames; broadcast dropout augmentation)
-- Metrica 3 Exhibition Matches (90,000 frames; optical tracking)
+
+(Metrica 3 games excluded from training because Metrica only tags 2.3%-8.5% dead balls
+and leaves throw-ins as Live, which suppresses P(Dead) recall.)
 
 Saves models to `models/stage1_dead_detector/`.
 """
@@ -31,36 +33,32 @@ MODEL_DIR = 'models/stage1_dead_detector'
 def main():
     print("=" * 90)
     print(" TRAINING COMBINED PRODUCTION STAGE 1 DEAD-BALL DETECTOR ENSEMBLE")
-    print(" 100% External Data (Nov 3 Rule Compliance) | 572,359 Training Frames")
+    print(" 100% External Data (Nov 3 Rule Compliance) | 482,359 Training Frames (V3_LeadLag_34f)")
     print("=" * 90)
     t0 = time.time()
     os.makedirs(MODEL_DIR, exist_ok=True)
 
-    # 1. Load All 14 External Matches
-    print("\n[1/3] Loading SkillCorner (4), IDSSE (7), and Metrica (3) external matches...")
+    # 1. Load All 11 External Matches (SkillCorner + IDSSE; Metrica excluded due to incomplete dead labels)
+    print("\n[1/3] Loading SkillCorner (4) and IDSSE (7) external matches...")
     sc_path = 'data/skillcorner_4matches_features.csv'
     idsse_path = 'data/idsse_7matches_features.csv'
-    met_path = 'data/metrica_3games_features.csv'
     assert os.path.exists(sc_path), f"Missing {sc_path}"
     assert os.path.exists(idsse_path), f"Missing {idsse_path}"
-    assert os.path.exists(met_path), f"Missing {met_path}"
 
     df_sc = pd.read_csv(sc_path)
     df_idsse = pd.read_csv(idsse_path)
-    df_met = pd.read_csv(met_path)
 
-    common_cols = [c for c in df_sc.columns if c in df_idsse.columns and c in df_met.columns]
+    common_cols = [c for c in df_sc.columns if c in df_idsse.columns]
     df_sc = df_sc[common_cols].copy()
     df_idsse = df_idsse[common_cols].copy()
-    df_met = df_met[common_cols].copy()
 
     # Create 41% ball-gap masked copy of IDSSE so the model learns missing-ball resilience
     df_idsse_masked = simulate_ball_gaps(df_idsse, target_missing_rate=0.41, seed=42)
 
     # 2. Extract Stage 1 Features per match (preserving rolling boundaries)
-    print("[2/3] Extracting 5 Physical Pillars of Dead-Ball Features per match...")
+    print("[2/3] Extracting V3_LeadLag_34f Physical Pillars of Dead-Ball Features per match...")
     feat_frames = []
-    for dframe in [df_sc, df_idsse, df_idsse_masked, df_met]:
+    for dframe in [df_sc, df_idsse, df_idsse_masked]:
         for _, gdf in dframe.groupby('game', sort=False):
             gf = add_dead_physics_features(gdf)
             gf['is_dead'] = (gf['label'] == 'D').astype(int)
@@ -79,12 +77,12 @@ def main():
     meta = {
         'training_frames': int(len(X)),
         'matches_used': matches_used,
-        'datasets': ['SkillCorner_4matches', 'IDSSE_7matches_clean', 'IDSSE_7matches_masked41', 'Metrica_3games'],
+        'datasets': ['SkillCorner_4matches', 'IDSSE_7matches_clean', 'IDSSE_7matches_masked41'],
         'features': DEAD_FEATURE_SCHEMA,
         'default_decoder': {
-            'tau': 0.45,
-            'smooth_win': 15,
-            'hyst': [0.32, 0.55],
+            'tau': 0.38,
+            'smooth_win': 25,
+            'hyst': [0.25, 0.45],
             'min_dead_frames': 50,
             'min_live_frames': 25,
         },

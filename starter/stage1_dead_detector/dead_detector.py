@@ -34,7 +34,9 @@ DEAD_FEATURE_SCHEMA = [
     'ball_isolated_5m', 'ball_isolated_10m',
     'players_within_3m_total', 'players_3m_roll_1s',
     # 6. Active Players (Camera Coverage)
-    'active_total', 'active_roll_2s'
+    'active_total', 'active_roll_2s',
+    # 7. Directional Lead/Lag (Future 2s minus Past 2s for Stoppage/Restart Edges)
+    'spread_delta_fwd_2s', 'dist_delta_fwd_2s', 'missing_delta_fwd_2s', 'players3m_delta_fwd_2s'
 ]
 
 
@@ -73,6 +75,11 @@ def add_dead_physics_features(df):
     df['pitch_decel_2s'] = pd.Series(pitch_speed).diff(50).fillna(0).values
     df['is_collective_walking'] = (df['speed_all_roll_2s'] < 1.25).astype(float)
     df['walking_roll_2s'] = df['is_collective_walking'].rolling(50, min_periods=1, center=True).mean()
+
+    # Mask constant dummy speed (e.g. IDSSE 1.40 constant) so trees don't split on fake constants
+    if 'overall_speed' in df.columns and df['overall_speed'].std() < 0.05:
+        for col in ['speed_all_roll_2s', 'pitch_decel_2s', 'is_collective_walking', 'walking_roll_2s']:
+            df[col] = np.nan
 
     # 3. Missing Ball Persistence
     missing = df['ball_missing'].fillna(0).values
@@ -120,6 +127,17 @@ def add_dead_physics_features(df):
     a_act = df['away_active'].fillna(10)
     df['active_total'] = h_act + a_act
     df['active_roll_2s'] = df['active_total'].rolling(50, min_periods=1, center=True).mean()
+
+    # 7. Directional Lead/Lag (Future 2s minus Past 2s for Stoppage/Restart Edges)
+    def _lead_minus_lag(series, win=50):
+        lead = series.iloc[::-1].rolling(win, min_periods=1).mean().iloc[::-1]
+        lag = series.rolling(win, min_periods=1).mean()
+        return (lead - lag).fillna(0.0)
+
+    df['spread_delta_fwd_2s'] = _lead_minus_lag(df['total_spread_area'], 50)
+    df['dist_delta_fwd_2s'] = _lead_minus_lag(df['min_dist_any'], 50)
+    df['missing_delta_fwd_2s'] = _lead_minus_lag(df['ball_missing'].fillna(0), 50)
+    df['players3m_delta_fwd_2s'] = _lead_minus_lag(df['players_within_3m_total'], 50)
 
     return df
 
@@ -199,7 +217,7 @@ class Stage1DeadDetector:
         probs /= len(self.models)
         return probs
 
-    def predict_gate(self, df, tau=0.45, min_dead_frames=50, min_live_frames=25, smooth_win=15, hyst=(0.32, 0.55)):
+    def predict_gate(self, df, tau=0.38, min_dead_frames=50, min_live_frames=25, smooth_win=25, hyst=(0.25, 0.45)):
         """
         Return boolean array: True = Dead Ball, False = Live Ball.
         Uses smoothed probabilities + dual-threshold hysteresis + football stoppage duration filtering
