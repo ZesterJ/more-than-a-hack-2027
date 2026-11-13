@@ -210,6 +210,29 @@ truth) and the experiments pipeline on the moving-ball tests (0.709 vs 0.699 on 
 0.959 vs 0.940 on starter truth), which are the ones that resemble the provided match. The experiments pipeline trains
 on stressed copies; the starter pipeline only does with `--hard-training`, which this comparison did not use.
 
+### Head-to-head, round 2: hard training and ensembles
+
+Same harness, two more entries: the starter pipeline with `--hard-training`, and ensembles that average the two
+pipelines' frame probabilities (S = starter, SH = starter + hard training, E = experiments) before decoding. Averages
+of the four conditions; "wins" = held-out matches with a higher average spellF1 than the experiments pipeline.
+
+| | spellF1 starter / experiments truth | wins | turnover detection | dead-ball recall | macro-F1 |
+|---|---|---|---|---|---|
+| starter | 0.694 / 0.701 | 5/7, 2/7 | 0.508 / 0.510 | 0.951 / 0.932 | 0.886 / 0.887 |
+| **starter + hard training** | **0.700 / 0.710** | 6/7, 4/7 | 0.526 / 0.526 | 0.958 / 0.938 | 0.890 / 0.891 |
+| experiments | 0.690 / 0.705 | n/a | 0.505 / 0.518 | 0.959 / 0.942 | 0.887 / 0.892 |
+| ensemble S+E, Viterbi 25/40 | 0.698 / 0.706 | 5/7, 4/7 | 0.537 / 0.537 | 0.958 / 0.938 | 0.891 / 0.893 |
+| **ensemble SH+E, Viterbi 25/40** | **0.699 / 0.709** | **5/7, 5/7** | **0.543 / 0.543** | 0.961 / 0.941 | 0.892 / 0.894 |
+| ensemble SH+E, starter decoder | 0.701 / 0.710 | 6/7, 4/7 | 0.532 / 0.535 | 0.962 / 0.943 | 0.892 / 0.894 |
+
+- Hard training moves the starter pipeline from a tie to slightly ahead of the experiments pipeline on both label
+  conventions, mostly on the moving-ball and turnover tests.
+- Averaging the two pipelines does not raise spellF1 beyond the hard-trained starter pipeline (all within 0.002), but it
+  finds clearly more turnovers (0.543 against 0.526 and 0.505-0.518) and is the only entry that beats the experiments
+  pipeline on a majority of matches under both label conventions.
+- All gaps here are 0.005-0.02 over seven matches: consistent, not large. The stressed test conditions come from the
+  same simulators the hard-trained and experiments models train on, so their advantage on those tests is optimistic.
+
 ## Feature importance (loss-based, held-out)
 
 `python -m experiments.feature_importance --target team` (home vs away on live frames) and

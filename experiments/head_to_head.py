@@ -20,6 +20,9 @@ Shipped settings. Starter: LightGBM on 109 + dynamics + set-piece features with 
 mirrored training copies, no domain weighting, decoder chosen on the other six matches. Experiments: touch/line
 and team-dynamics features, 3 bagged models trained on standard + stressed gapped copies, Viterbi 25/40.
 
+Two further entries: the starter pipeline with --hard-training (also trained on moving-ball / turnover-gap copies of
+the other six matches), and ensembles that average the two pipelines' frame probabilities before decoding.
+
     python -m experiments.head_to_head                 # all seven matches, about 1.5 hours the first time
     python -m experiments.head_to_head --matches J03WMX J03WN1
 """
@@ -104,9 +107,11 @@ def main():
 
     print("building starter features ...", flush=True)
     train_sets = ep.load_idsse_sets(pattern, matches=matches, augment=True, **ARGS)
+    hard = ep.load_idsse_sets(pattern, matches=matches, augment=True, drift=True, turnover=True, **ARGS)
+    hard_sets = {**train_sets, **{k + "+hard": v for k, v in hard.items()}}
     test_sets = {c: ep.load_idsse_sets(pattern, matches=matches, **kw, **ARGS) for c, kw in CONDITIONS.items()}
 
-    truths, halves, posts, jw_codes = {}, {}, {c: {} for c in CONDITIONS}, {c: {} for c in CONDITIONS}
+    truths, halves = {}, {}
     for m in matches:
         raw = sext.load_idsse(m)
         half = raw["period"].astype(np.int8)
@@ -115,43 +120,63 @@ def main():
                      "experiments truth": align_labels(jw_raw, half, MIN_DUR)}
         halves[m] = half
 
+    # frame probabilities of every model on every held-out match and condition
+    probs = {k: {c: {} for c in CONDITIONS} for k in ("S", "SH", "E")}
     for held in matches:
         others = [m for m in matches if m != held]
         ours = ep.fit("lightgbm", train_sets, others)
+        ours_hard = ep.fit("lightgbm", hard_sets, [k for k in hard_sets if k.split("+")[0] != held])
         theirs, cols = experiments_model(others)
         for c, kw in CONDITIONS.items():
-            posts[c][held] = _full_proba(ours, test_sets[c][held]["X"])
+            probs["S"][c][held] = _full_proba(ours, test_sets[c][held]["X"])
+            probs["SH"][c][held] = _full_proba(ours_hard, test_sets[c][held]["X"])
             feats = experiments_features(corrupted_trk(held, pattern, **kw))
-            jw_codes[c][held] = viterbi_decode(theirs.predict_proba(feats[cols]), halves[held], 25, 40, 40)
+            probs["E"][c][held] = theirs.predict_proba(feats[cols])
         print("  held out", held, flush=True)
+    for a, b in (("S", "E"), ("SH", "E")):
+        probs[a + "+" + b] = {c: {m: 0.5 * (probs[a][c][m] + probs[b][c][m]) for m in matches} for c in CONDITIONS}
 
-    # starter decoder for each held-out match: the grid setting best on the OTHER matches' frozen-condition posteriors
     grid = ep.GRID
-    scores = {m: ep.grid_scores(posts["frozen"][m], test_sets["frozen"][m], grid) for m in matches}
-    choice = {m: grid[int(np.mean([scores[o] for o in matches if o != m], axis=0).argmax())] for m in matches}
 
+    def starter_decoder(P):
+        """For each held-out match: the grid setting best on the OTHER matches' frozen-condition probabilities."""
+        scores = {m: ep.grid_scores(P["frozen"][m], test_sets["frozen"][m], grid) for m in matches}
+        return {m: grid[int(np.mean([scores[o] for o in matches if o != m], axis=0).argmax())] for m in matches}
+
+    entries = {   # name: (probabilities, decoder)
+        "starter": ("S", "starter"), "starter + hard training": ("SH", "starter"),
+        "experiments": ("E", "viterbi"),
+        "ensemble S+E, Viterbi 25/40": ("S+E", "viterbi"), "ensemble SH+E, Viterbi 25/40": ("SH+E", "viterbi"),
+        "ensemble SH+E, starter decoder": ("SH+E", "starter"),
+    }
     rows = {}
-    for c in CONDITIONS:
-        for m in matches:
-            ours_pred = decode_pipeline(posts[c][m], test_sets[c][m]["aux"], **choice[m])
-            for tname, truth in truths[m].items():
-                rows.setdefault(("starter", tname, c), []).append(metrics(truth, ours_pred, halves[m]))
-                rows.setdefault(("experiments", tname, c), []).append(metrics(truth, jw_codes[c][m], halves[m]))
+    for name, (pk, dec) in entries.items():
+        choice = starter_decoder(probs[pk]) if dec == "starter" else None
+        for c in CONDITIONS:
+            for m in matches:
+                P = probs[pk][c][m]
+                pred = (decode_pipeline(P, test_sets[c][m]["aux"], **choice[m]) if dec == "starter"
+                        else viterbi_decode(P, halves[m], 25, 40, 40))
+                for tname, truth in truths[m].items():
+                    rows.setdefault((name, tname, c), []).append(metrics(truth, pred, halves[m]))
 
     for key, title in (("spell", "spellF1"), ("turn", "turnover detection F1 (within 1 s)"),
                        ("dead", "dead-ball recall"), ("macro", "macro-F1")):
-        print("\n{}   (mean over {} held-out external matches)".format(title, len(matches)))
-        print("{:<34}".format("") + "".join("{:>10}".format(c) for c in CONDITIONS) + "{:>10}".format("average"))
-        for pipe in ("starter", "experiments"):
-            for tname in ("starter truth", "experiments truth"):
-                vals = [float(np.mean([r[key] for r in rows[(pipe, tname, c)]])) for c in CONDITIONS]
-                print("{:<34}".format("{} on {}".format(pipe, tname))
-                      + "".join("{:>10.3f}".format(v) for v in vals) + "{:>10.3f}".format(float(np.mean(vals))))
-    wins = {t: sum(np.mean([rows[("starter", t, c)][i]["spell"] for c in CONDITIONS])
-                   > np.mean([rows[("experiments", t, c)][i]["spell"] for c in CONDITIONS]) for i in range(len(matches)))
-            for t in ("starter truth", "experiments truth")}
-    print("\nmatches where the starter pipeline has the higher average spellF1:",
-          ", ".join("{} {}/{}".format(t, w, len(matches)) for t, w in wins.items()))
+        for tname in ("starter truth", "experiments truth"):
+            print("\n{} on {}   (mean over {} held-out external matches)".format(title, tname, len(matches)))
+            print("{:<34}".format("") + "".join("{:>10}".format(c) for c in CONDITIONS) + "{:>10}".format("average"))
+            for name in entries:
+                vals = [float(np.mean([r[key] for r in rows[(name, tname, c)]])) for c in CONDITIONS]
+                print("{:<34}".format(name) + "".join("{:>10.3f}".format(v) for v in vals)
+                      + "{:>10.3f}".format(float(np.mean(vals))))
+    print("\nmatches won on average spellF1 against the experiments pipeline (starter truth / experiments truth):")
+    for name in entries:
+        if name == "experiments":
+            continue
+        w = [sum(np.mean([rows[(name, t, c)][i]["spell"] for c in CONDITIONS])
+                 > np.mean([rows[("experiments", t, c)][i]["spell"] for c in CONDITIONS]) for i in range(len(matches)))
+             for t in ("starter truth", "experiments truth")]
+        print("  {:<34} {}/{}  {}/{}".format(name, w[0], len(matches), w[1], len(matches)))
 
 
 if __name__ == "__main__":
