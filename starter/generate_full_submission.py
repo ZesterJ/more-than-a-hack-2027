@@ -53,7 +53,8 @@ def predict_and_write(model, params, out_name, advanced=True, boundary=True, mot
     return path
 
 
-def main(out_name, model_name, advanced=True, control_s=3.0, boundary=True, motion=True, augment=True, domain=True, temporal=True, skillcorner=False):
+def main(out_name, model_name, advanced=True, control_s=3.0, boundary=True, motion=True, augment=True, domain=True, temporal=True, skillcorner=False,
+         hard_training=False):
     sets = ep.load_idsse_sets(ep.ball_unseen_pattern(), advanced=advanced, control_s=control_s or None,
                               boundary=boundary, motion=motion, augment=augment, temporal=temporal)
     if skillcorner:  # a second external source (MIT licence): video-derived tracking, phases-of-play labels
@@ -64,11 +65,23 @@ def main(out_name, model_name, advanced=True, control_s=3.0, boundary=True, moti
                                 loader=functools.partial(ext.load_skillcorner, extrapolate=True))
         sets.update({"SC_" + k: v for k, v in sc.items()})
         print("training on %d IDSSE + %d SkillCorner matches" % (len(sets) - len(sc), len(sc)))
+    base = list(sets)
+    if hard_training:
+        # also train on copies of every match where the ball keeps moving while dead and is lost around possession
+        # changes, so the model cannot lean on the frozen ball or on always seeing the ball at a turnover. External
+        # data only; chosen by starter/ablation_integration.py (variant V4).
+        hard = ep.load_idsse_sets(ep.ball_unseen_pattern(), advanced=advanced, control_s=control_s or None,
+                                  boundary=boundary, motion=motion, augment=augment, temporal=temporal,
+                                  drift=True, turnover=True)
+        sets.update({k + "+hard": v for k, v in hard.items()})
+        print("training on %d matches, each as recorded and with moving-ball / turnover-gap copies" % len(base))
     weights = None
     if domain:  # weight the external frames to resemble this match's tracking (inputs only, no labels)
         weights = ep.domain_weights(sets, ep.target_features(advanced, boundary, motion, temporal))
-    posts = ep.lomo_posteriors(model_name, sets, weights)
-    params, _ = ep.tune_decoder(posts, sets)
+    # leave-one-MATCH-out: a held-out match's hard copy must leave training too
+    posts = {held: _full_proba(ep.fit(model_name, sets, [k for k in sets if k.split("+")[0] != held], weights),
+                               sets[held]["X"]) for held in base}
+    params, _ = ep.tune_decoder(posts, {k: sets[k] for k in base})
     print("decoder (leave-one-match-out on IDSSE): {}".format(params))
     return predict_and_write(ep.fit(model_name, sets, weights=weights), params, out_name, advanced, boundary, motion, temporal)
 
@@ -86,7 +99,17 @@ if __name__ == "__main__":
     parser.add_argument("--no-motion", action="store_true", help="drop the 12 motion features")
     parser.add_argument("--no-domain", action="store_true", help="no input-only domain weighting of the external frames")
     parser.add_argument("--no-augment", action="store_true", help="train without mirrored copies of the matches")
+    parser.add_argument("--keep-ball-motion", action="store_true",
+                        help="keep the 14 features derived from how the ball moves (default: removed, because in IDSSE "
+                             "the ball is frozen while dead; see starter/ablation_ball_motion.py)")
+    parser.add_argument("--no-dynamics", action="store_true",
+                        help="drop the 36 ball-independent team-movement features (default: used; starter/ablation_integration.py)")
+    parser.add_argument("--hard-training", action="store_true",
+                        help="also train on moving-ball / turnover-gap copies of every match (variant V4 of the ablation)")
     args = parser.parse_args()
+    ep.DROP_BALL_MOTION = not args.keep_ball_motion
+    ep.USE_DYNAMICS = not args.no_dynamics
     main(args.out, args.model, advanced=not args.base_features, control_s=args.control_s,
          boundary=not args.no_boundary, motion=not args.no_motion, augment=not args.no_augment,
-         domain=not args.no_domain, temporal=not args.no_temporal, skillcorner=args.with_skillcorner)
+         domain=not args.no_domain, temporal=not args.no_temporal, skillcorner=args.with_skillcorner,
+         hard_training=args.hard_training)

@@ -376,6 +376,48 @@ def apply_occlusion(trk, missing_pattern):
     return {**trk, "ball": ball}
 
 
+def dead_ball_drift(trk, seed=0, speed=4.0):
+    """Let the ball keep moving while it is dead, instead of sitting frozen.
+
+    In IDSSE the ball is frozen for most dead-ball frames; in the provided tracking it never is (its median
+    step is about 5 m/s and its path is smooth). Each dead stretch gets a smooth random path that starts at
+    the frozen position: the heading follows a random walk and the speed hovers around `speed` m/s. Uses the
+    provider's dead-ball LABELS of the external match only to decide where to move the ball; nothing from the
+    provided match.
+    """
+    rng = np.random.default_rng(seed)
+    ball = trk["ball"].copy()
+    dead = np.asarray(trk["labels"]) == D
+    edges = np.flatnonzero(np.diff(np.r_[0, dead.astype(int), 0]))
+    for s, e in zip(edges[::2], edges[1::2]):
+        if np.isnan(ball[s, 0]):
+            continue
+        x, y = float(ball[s, 0]) * 105.0, float(ball[s, 1]) * 68.0
+        theta, spd = rng.uniform(0, 2 * np.pi), speed
+        for i in range(s, e):
+            theta += rng.normal(0, 0.15)
+            spd = float(np.clip(spd + 0.2 * (speed - spd) + rng.normal(0, 0.6), 0.5, 9.0))
+            x = float(np.clip(x + spd / 25 * np.cos(theta), 0.0, 105.0))
+            y = float(np.clip(y + spd / 25 * np.sin(theta), 0.0, 68.0))
+            ball[i, 0], ball[i, 1] = x / 105.0, y / 68.0
+    return {**trk, "ball": ball}
+
+
+def turnover_gaps(trk, seed=0, prob=0.6):
+    """Hide the ball around real changes of possession (and of live/dead), as a tracker tends to lose it exactly there
+    (tackles, aerial balls, crowded areas). Returns a copy. Uses the external match's own provider labels to decide
+    where; nothing from the provided match."""
+    rng = np.random.default_rng(seed)
+    lab = np.asarray(trk["labels"])
+    mask = np.zeros(len(lab), dtype=bool)
+    for c in np.flatnonzero(np.diff(lab) != 0) + 1:
+        if rng.random() < prob:
+            mask[max(0, c - int(rng.integers(25, 100))): c + int(rng.integers(25, 100))] = True
+    ball = trk["ball"].copy()
+    ball[mask] = np.nan
+    return {**trk, "ball": ball}
+
+
 def period_segments(trk):
     p = trk["period"]
     cuts = np.flatnonzero(np.diff(p)) + 1

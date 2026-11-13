@@ -294,8 +294,82 @@ def temporal_block(trk, is_home, X22, E):
     return np.nan_to_num(np.column_stack([a[k] for k in TEMPORAL]).astype(np.float32))
 
 
-def featureset(trk, is_home, advanced=False, boundary=False, motion=False, temporal=False):
-    """(X, aux): 30 model features (+20 advanced ones if asked) and the per-frame arrays the decoder rules need."""
+# Ball-independent TEAM-MOVEMENT features (temporal). After a change of possession the side that wins the ball pushes up
+# and the other drops back, and that is visible even when the ball is not tracked. Only CHANGES over the previous / next
+# 2 s and 6 s are used, never levels, because levels such as team width differ between teams and data sources. The
+# deepest-player series are deliberately left out: on their own they separate the provided match from every external
+# match (source-audit AUC 0.96 against 0.60 for one external match vs the rest), a tracking artefact.
+DYNAMICS_SERIES = ("home_cx", "away_cx", "cx_diff", "home_front", "away_front",
+                   "home_spread_x", "away_spread_x", "home_speed", "away_speed")
+DYNAMICS = ["dyn_{}_{}{}".format(s, d, w) for s in DYNAMICS_SERIES for w in (50, 150) for d in ("fwd", "back")]
+USE_DYNAMICS = True    # module default for featureset(); on the evidence of starter/ablation_integration.py
+
+
+def _segments(n, period):
+    """[(start, stop)] runs of constant period, so no window reaches across the halftime join."""
+    if period is None:
+        return [(0, n)]
+    period = np.asarray(period)
+    cuts = np.flatnonzero(np.diff(period)) + 1
+    edges = np.r_[0, cuts, n]
+    return list(zip(edges[:-1], edges[1:]))
+
+
+def dynamics_block(trk, is_home, X22, E):
+    """How each team's centroid, front line, width and speed move over the previous / next 2 s and 6 s."""
+    length = GAMES[GAME]["pitch"][0]
+    px = trk["players"][:, :, 0] * length
+    n = len(px)
+
+    def front(mask, pick):
+        vals = px[:, mask]
+        filled = np.where(np.isnan(vals), -np.inf if pick == "max" else np.inf, vals)
+        out = filled.max(axis=1) if pick == "max" else filled.min(axis=1)
+        out[np.isinf(out)] = np.nan
+        return out
+
+    series = {
+        "home_cx": X22.home_cx.values, "away_cx": X22.away_cx.values, "cx_diff": X22.centroid_diff_x.values,
+        "home_front": front(is_home, "max"), "away_front": front(~is_home, "min"),   # home attacks +x
+        "home_spread_x": X22.home_spread_x.values, "away_spread_x": X22.away_spread_x.values,
+        "home_speed": X22.mean_speed_home.values, "away_speed": X22.mean_speed_away.values,
+    }
+    cols = []
+    for name in DYNAMICS_SERIES:
+        values = np.asarray(series[name], dtype=float)
+        out = {key: np.full(n, np.nan) for key in ("fwd50", "back50", "fwd150", "back150")}
+        for a, b in _segments(n, trk.get("period")):
+            smooth = pd.Series(values[a:b]).rolling(25, center=True, min_periods=1).mean()
+            for w in (50, 150):
+                out["fwd%d" % w][a:b] = (smooth.shift(-w) - smooth).to_numpy()
+                out["back%d" % w][a:b] = (smooth - smooth.shift(w)).to_numpy()
+        for w in (50, 150):
+            cols += [out["fwd%d" % w], out["back%d" % w]]
+    return np.nan_to_num(np.column_stack(cols).astype(np.float32))
+
+
+# Features derived from how the BALL MOVES (computed from its positions). In the IDSSE training data the ball is frozen
+# for most dead-ball frames, so these teach "ball not moving => dead"; in the provided tracking the ball keeps moving
+# while dead, so the shortcut fails (the source audit in experiments/FINDINGS.md: the temporal ball-speed / ball-path
+# features are the most source-specific group, AUC 0.62 each against 0.51-0.52 for one external match vs the rest).
+# Everything here is judged on external data and tracking only. See starter/ablation_ball_motion.py.
+BALL_MOTION = (
+    "ball_spd_pos", "ball_spd_chg", "ball_dir_chg",                                  # boundary block
+    "ball_vx", "ball_vy", "rel_speed_nearest", "carry_cos",                          # motion block
+    "ball_path_1s", "ball_path_3s", "ball_straight_3s",                              # temporal block
+    "ball_spd_lag1s", "ball_spd_lead1s", "ball_spd_lag3s", "ball_spd_lead3s",
+)
+DROP_BALL_MOTION = True    # module default for featureset(); on the evidence of starter/ablation_ball_motion.py and ablation_integration.py
+
+
+def featureset(trk, is_home, advanced=False, boundary=False, motion=False, temporal=False, drop_ball_motion=None,
+               dynamics=None):
+    """(X, aux): 30 model features (+20 advanced ones if asked) and the per-frame arrays the decoder rules need.
+
+    drop_ball_motion removes the BALL_MOTION columns (None = the module default DROP_BALL_MOTION); dynamics appends the
+    ball-independent team-movement block (None = the module default USE_DYNAMICS)."""
+    drop_ball_motion = DROP_BALL_MOTION if drop_ball_motion is None else drop_ball_motion
+    dynamics = USE_DYNAMICS if dynamics is None else dynamics
     X22 = build_features(trk, is_home=is_home)
     E = build_extra(trk, X22)
     aux = dict(d_min=E.d_min.values, ball_missing=X22.ball_missing.values,
@@ -303,14 +377,24 @@ def featureset(trk, is_home, advanced=False, boundary=False, motion=False, tempo
     names = list(X22.columns) + list(E.columns)
     keep = [i for i, n in enumerate(names) if n not in UNOBSERVED]
     X = np.hstack([X22.values, E.values])[:, keep]
+    out_names = [names[i] for i in keep]
     if advanced:
         X = np.nan_to_num(np.hstack([X, advanced_block(X22, E)]))
+        out_names += ADVANCED
     if boundary:
         X = np.hstack([X, boundary_block(trk, is_home, X22, E)])
+        out_names += BOUNDARY
     if motion:
         X = np.hstack([X, motion_block(trk, is_home, X22, E)])
+        out_names += MOTION
     if temporal:
         X = np.hstack([X, temporal_block(trk, is_home, X22, E)])
+        out_names += TEMPORAL
+    if dynamics:
+        X = np.hstack([X, dynamics_block(trk, is_home, X22, E)])
+        out_names += DYNAMICS
+    if drop_ball_motion:
+        X = X[:, [i for i, n in enumerate(out_names) if n not in BALL_MOTION]]
     return X, aux
 
 
@@ -352,11 +436,14 @@ def mirror_tracking(trk, mode):
 
 
 def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, control_s=None, boundary=False,
-                   motion=False, mirror=None, augment=False, temporal=False, loader=None):
+                   motion=False, mirror=None, augment=False, temporal=False, loader=None, drift=False, turnover=False):
     """{match: dict(X, aux, y, period, aug)}, oriented so the home team attacks +x, with `pattern` applied.
 
     `augment` also stores `aug`: (X, y) pairs of the same match mirrored top-to-bottom and left-to-right (with the
-    teams swapped), which `fit` adds to the *training* matches only. `mirror` builds a single mirrored version."""
+    teams swapped), which `fit` adds to the *training* matches only. `mirror` builds a single mirrored version.
+    `drift` lets the ball keep moving while it is dead (see external.dead_ball_drift), as it does in the provided
+    tracking, before `pattern` is applied. `turnover` additionally hides the ball around possession changes (see
+    external.turnover_gaps), after `pattern`."""
     def build(trk, mode):
         if mode:
             trk = mirror_tracking(trk, mode)
@@ -370,8 +457,12 @@ def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, con
     for m in matches:
         trk = (loader or ext.load_idsse)(m)
         trk = ext.orient_home_attacks_right(trk, trk["is_home"], ext.period_segments(trk))
+        if drift:
+            trk = ext.dead_ball_drift(trk)
         if pattern is not None:
             trk = ext.apply_occlusion(trk, pattern)
+        if turnover:
+            trk = ext.turnover_gaps(trk)
         X, aux, y = build(trk, mirror)
         sets[m] = dict(X=X, aux=aux, y=y, period=trk["period"])
         if augment:

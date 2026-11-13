@@ -111,6 +111,51 @@ excluded), training on standard plus shifted copies, an average of 3 models, Vit
 external matches can fail to transfer, and only one official-scorer look may be taken after freezing.
 Switch costs 20-40 are within noise of each other; 25 was kept for the closest possession count.
 
+## Integration branch: the frozen-ball shortcut, measured (external data only)
+
+`starter/ablation_ball_motion.py` on the integration branch, leave-one-match-out over the seven IDSSE matches,
+with the provided match's ball-gap pattern applied. In IDSSE the ball is frozen for most dead-ball frames; in the
+provided tracking it never is, so features built from how the ball moves (`external_pipeline.BALL_MOTION`, 14
+columns) teach a cue that does not exist there. The "moving" test lets the ball keep moving while dead
+(`external.dead_ball_drift`).
+
+| trained as | tested on frozen ball: dead recall / spellF1 | tested on moving ball: dead recall / spellF1 |
+|---|---|---|
+| A all features (the default before this) | 0.96 / 0.632 | **0.51 / 0.423** |
+| B ball-motion features removed | 0.95 / 0.607 | 0.90 / 0.572 |
+| C all features + moving-ball training copies | 0.96 / 0.621 | 0.95 / 0.608 |
+
+The shortcut halves dead-ball recall when the ball keeps moving, which is the weakness the integration branch's
+own PR reports on the provided match (recall 27.5%). Removing the features (B) costs about 0.025 spellF1 on a frozen
+ball and recovers most of the loss on a moving one. C does best, but its moving-ball test comes from the same
+simulator it trained on, so its edge is optimistic; B does not depend on the simulator at all. Untested here: whether the
+simulator's ball path resembles the real one. See the next section for the combination with the team-movement features.
+
+## Integration: physical + temporal features together (external data only)
+
+`starter/ablation_integration.py`, leave-one-match-out over the seven IDSSE matches, four test versions of every held-out
+match (as recorded; ball keeps moving while dead; ball lost around possession changes; both), plain 2 s smoothing decoder.
+Average over the four versions:
+
+| variant | spellF1 | turnover detection (1 s) | dead-ball recall | macro-F1 |
+|---|---|---|---|---|
+| V0 Jordan's pipeline as merged (109 features) | 0.516 | 0.356 | 0.736 | 0.787 |
+| V1 the 14 ball-motion features removed | 0.577 | 0.414 | 0.924 | 0.860 |
+| V2 V0 + 36 team-movement features (`dyn_*`) | 0.543 | 0.397 | 0.744 | 0.797 |
+| V3 V1 + team-movement features | 0.617 | 0.468 | 0.933 | 0.875 |
+| **V4 V3, also trained on moving-ball / turnover-gap copies** | **0.632** | **0.495** | **0.947** | **0.882** |
+
+Reading it: V0 collapses when the ball keeps moving during dead frames (dead-ball recall 0.96 to 0.51; spellF1 0.632 to
+0.423). The team-movement features raise clean-data and turnover scores on their own (V2: 0.632 to 0.661) but do not
+remove the shortcut. Removing the ball-motion features fixes dead ball but costs clean-data accuracy (V1); with the
+team-movement features that loss is recovered (V3), and V3 beats both parts on every hard condition. V4 adds a little more
+on every hard condition. Caveats: all numbers are on external matches, the moving-ball and turnover-gap conditions are our
+own simulators, and V4 trains on the same simulators, so its extra edge is optimistic; V3 does not depend on them.
+
+**Defaults on the integration branch:** `external_pipeline.DROP_BALL_MOTION = True` and `USE_DYNAMICS = True`.
+`generate_full_submission.py` has `--keep-ball-motion`, `--no-dynamics` and `--hard-training` (V4). The executed
+notebook 04 and the technical document describe the earlier behaviour and need regenerating.
+
 ## Feature importance (loss-based, held-out)
 
 `python -m experiments.feature_importance --target team` (home vs away on live frames) and
