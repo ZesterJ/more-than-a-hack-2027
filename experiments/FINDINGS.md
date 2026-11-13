@@ -190,6 +190,26 @@ Two ball-independent dead-ball blocks on top of the integration defaults (V3), j
   dead-to-live change). The training noise (1 s jitter) does not model this; the held-out match's own labels are not
   used to correct it, because that would leak into the leave-one-match-out score.
 
+## Head-to-head: starter pipeline vs experiments pipeline (external data only)
+
+`python -m experiments.head_to_head`: both pipelines as they ship, trained on six IDSSE matches and predicting the SAME
+corrupted copy of the seventh in the four test conditions, scored with the official scorer against each pipeline's own
+3 s label convention. Starter = 109 features + dynamics + set-piece (ball-motion removed), mirrored copies, no domain
+weighting, decoder chosen on the other six. Experiments = `make_submission.py` defaults (touch/line + dynamics, 3 bags
+trained on standard + stressed copies, Viterbi 25/40). spellF1, average of the four conditions:
+
+| | on starter truth | on experiments truth |
+|---|---|---|
+| starter pipeline | **0.694** | 0.701 |
+| experiments pipeline | 0.690 | **0.705** |
+| matches where starter is higher | 5 / 7 | 2 / 7 |
+
+Each pipeline wins on its own label convention by about 0.004, which is within noise: the two are tied. The pattern by
+condition is consistent, though: the starter pipeline is ahead on the frozen-ball test (0.713 vs 0.700 on starter
+truth) and the experiments pipeline on the moving-ball tests (0.709 vs 0.699 on experiments truth; dead-ball recall
+0.959 vs 0.940 on starter truth), which are the ones that resemble the provided match. The experiments pipeline trains
+on stressed copies; the starter pipeline only does with `--hard-training`, which this comparison did not use.
+
 ## Feature importance (loss-based, held-out)
 
 `python -m experiments.feature_importance --target team` (home vs away on live frames) and
