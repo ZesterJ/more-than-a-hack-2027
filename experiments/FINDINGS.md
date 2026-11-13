@@ -156,6 +156,83 @@ own simulators, and V4 trains on the same simulators, so its extra edge is optim
 `generate_full_submission.py` has `--keep-ball-motion`, `--no-dynamics` and `--hard-training` (V4). The executed
 notebook 04 and the technical document describe the earlier behaviour and need regenerating.
 
+## Set-piece geometry and restart timing (Jordan, external data only)
+
+Two ball-independent dead-ball blocks on top of the integration defaults (V3), judged with the same four test conditions
+(`starter/ablation_setpiece.py`, `starter/ablation_restart.py`). Averages over the four conditions:
+
+| variant | spellF1 | turnover detection (1 s) | dead-ball recall | macro-F1 |
+|---|---|---|---|---|
+| V3 integration default | 0.619 | 0.466 | 0.933 | 0.875 |
+| **V5 V3 + 14 set-piece features** | **0.630** | **0.494** | **0.945** | **0.882** |
+| R5 V5 + restart timing | 0.631 | 0.493 | 0.947 | 0.884 |
+| V4 V3 + hard-condition training | 0.631 | 0.497 | 0.947 | 0.882 |
+| V6 V4 + set-piece | 0.636 | 0.511 | 0.954 | 0.887 |
+
+- **Set-piece geometry** (`external_pipeline.SETPIECE`, player positions and speeds only): nearest player to the touchline
+  and that player's speed, nearest player to a corner flag and to a goal line, share of players in their own half
+  (kick-offs), players in the boxes, the fastest and 90th-percentile player speed and their spread, how many players
+  are slow, the drop in top speed over 2 s, and the average gap to the nearest opponent. V5 beats V3 on all four
+  conditions and all four metrics (+0.011 spellF1, +0.028 turnover detection); V6 beats V4 on all four too. On by
+  default (`USE_SETPIECE`, `--no-setpiece` turns it off). On IDSSE the fastest player averages 3.1 m/s in dead ball
+  against 5.0 m/s in play, and about 8 players are slow against 3.
+- **Restart timing** (`external_pipeline.RESTART`): seconds since the last and until the next restart. Training uses each
+  IDSSE match's own restart events (`external.idsse_restarts`), thinned per type to the share the provided Smart
+  Tagging finds (59% of throw-ins and goal kicks, 20% of free kicks, all corners and kick-offs), jittered by 1 s and
+  with 10% false alarms; prediction uses the provided match's Smart Tagging set pieces. No labels are used to place
+  or align any of it. On external data it adds about nothing on top of the set-piece features (R5 vs V5), so it stays
+  off (`--restart-timing`). External dead-ball recall is already about 0.95, so there is little room there; whether it
+  helps on the provided match cannot be checked without its labels.
+- **Smart Tagging timing.** A set-piece phase starts before the restart: aligning the average team-speed profile around
+  the tagged starts with the profile around IDSSE's exact restart events (tracking only) puts the restart 5.4 s after
+  the tag start (correlation 0.98 at that shift against 0.45 at zero). `estimate_smart_tag_lead()` recomputes this.
+- **IDSSE event clocks** differ from the tracking clock by -1.4 to +2.0 s per match (median offset to the nearest
+  dead-to-live change). The training noise (1 s jitter) does not model this; the held-out match's own labels are not
+  used to correct it, because that would leak into the leave-one-match-out score.
+
+## Head-to-head: starter pipeline vs experiments pipeline (external data only)
+
+`python -m experiments.head_to_head`: both pipelines as they ship, trained on six IDSSE matches and predicting the SAME
+corrupted copy of the seventh in the four test conditions, scored with the official scorer against each pipeline's own
+3 s label convention. Starter = 109 features + dynamics + set-piece (ball-motion removed), mirrored copies, no domain
+weighting, decoder chosen on the other six. Experiments = `make_submission.py` defaults (touch/line + dynamics, 3 bags
+trained on standard + stressed copies, Viterbi 25/40). spellF1, average of the four conditions:
+
+| | on starter truth | on experiments truth |
+|---|---|---|
+| starter pipeline | **0.694** | 0.701 |
+| experiments pipeline | 0.690 | **0.705** |
+| matches where starter is higher | 5 / 7 | 2 / 7 |
+
+Each pipeline wins on its own label convention by about 0.004, which is within noise: the two are tied. The pattern by
+condition is consistent, though: the starter pipeline is ahead on the frozen-ball test (0.713 vs 0.700 on starter
+truth) and the experiments pipeline on the moving-ball tests (0.709 vs 0.699 on experiments truth; dead-ball recall
+0.959 vs 0.940 on starter truth), which are the ones that resemble the provided match. The experiments pipeline trains
+on stressed copies; the starter pipeline only does with `--hard-training`, which this comparison did not use.
+
+### Head-to-head, round 2: hard training and ensembles
+
+Same harness, two more entries: the starter pipeline with `--hard-training`, and ensembles that average the two
+pipelines' frame probabilities (S = starter, SH = starter + hard training, E = experiments) before decoding. Averages
+of the four conditions; "wins" = held-out matches with a higher average spellF1 than the experiments pipeline.
+
+| | spellF1 starter / experiments truth | wins | turnover detection | dead-ball recall | macro-F1 |
+|---|---|---|---|---|---|
+| starter | 0.694 / 0.701 | 5/7, 2/7 | 0.508 / 0.510 | 0.951 / 0.932 | 0.886 / 0.887 |
+| **starter + hard training** | **0.700 / 0.710** | 6/7, 4/7 | 0.526 / 0.526 | 0.958 / 0.938 | 0.890 / 0.891 |
+| experiments | 0.690 / 0.705 | n/a | 0.505 / 0.518 | 0.959 / 0.942 | 0.887 / 0.892 |
+| ensemble S+E, Viterbi 25/40 | 0.698 / 0.706 | 5/7, 4/7 | 0.537 / 0.537 | 0.958 / 0.938 | 0.891 / 0.893 |
+| **ensemble SH+E, Viterbi 25/40** | **0.699 / 0.709** | **5/7, 5/7** | **0.543 / 0.543** | 0.961 / 0.941 | 0.892 / 0.894 |
+| ensemble SH+E, starter decoder | 0.701 / 0.710 | 6/7, 4/7 | 0.532 / 0.535 | 0.962 / 0.943 | 0.892 / 0.894 |
+
+- Hard training moves the starter pipeline from a tie to slightly ahead of the experiments pipeline on both label
+  conventions, mostly on the moving-ball and turnover tests.
+- Averaging the two pipelines does not raise spellF1 beyond the hard-trained starter pipeline (all within 0.002), but it
+  finds clearly more turnovers (0.543 against 0.526 and 0.505-0.518) and is the only entry that beats the experiments
+  pipeline on a majority of matches under both label conventions.
+- All gaps here are 0.005-0.02 over seven matches: consistent, not large. The stressed test conditions come from the
+  same simulators the hard-trained and experiments models train on, so their advantage on those tests is optimistic.
+
 ## Feature importance (loss-based, held-out)
 
 `python -m experiments.feature_importance --target team` (home vs away on live frames) and

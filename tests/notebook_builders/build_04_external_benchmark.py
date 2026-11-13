@@ -121,8 +121,9 @@ md("""
 This match's tracking differs from the Bundesliga matches (the ball is unseen far more often, different tempo). A small
 classifier learns to tell external frames from this match's frames **using the tracking features alone, no labels**, and
 the external frames are weighted by how much they resemble this match. Weights are cross-fitted by match. Applies to the
-LightGBM family; kept because it shrinks the input shift (7 strongly shifted features become 1) and costs at most 0.01 of
-leave-one-match-out score (with the temporal features it is now 0.004 lower, so its benefit is mainly the smaller shift).
+LightGBM family. It shrinks the input shift (strongly shifted features: 4 become 1), but with the current features it lowers
+the leave-one-match-out score by about 0.013, more than the 0.01 we agreed to accept, so turning it off (`--no-domain`) is
+recommended; the default is unchanged pending the team's decision.
 """)
 code("""
 need("sets", "1"); need("details", "3")

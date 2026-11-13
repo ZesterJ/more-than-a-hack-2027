@@ -69,6 +69,7 @@ def score(P, match):
 
 def main():
     ep.USE_DYNAMICS, ep.DROP_BALL_MOTION = True, False       # build every column once, then select subsets
+    ep.USE_SETPIECE, ep.USE_RESTART = False, False          # the feature set as it was when this ablation was run
     pattern = ep.ball_unseen_pattern()
     names = column_names()
     conditions = {"frozen": {}, "moving": dict(drift=True), "turnover": dict(turnover=True),
