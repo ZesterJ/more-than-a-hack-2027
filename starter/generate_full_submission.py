@@ -42,6 +42,8 @@ def predict_and_write(model, params, out_name, advanced=True, boundary=True, mot
     trk = load_tracking(n_frames)
     is_home = team_of_each_track(asset_paths()["atd_meta"]) == 0
     trk = ext.orient_home_attacks_right(trk, is_home, spans)
+    if ep.USE_RESTART:   # restart times from this match's Smart Tagging (an allowed input)
+        trk = {**trk, "restarts": ep.smart_tag_restarts()[0]}
     X, aux = ep.featureset(trk, is_home, advanced, boundary, motion, temporal)
 
     codes = np.full(n_frames, 3, dtype=np.int8)
@@ -104,11 +106,17 @@ if __name__ == "__main__":
                              "the ball is frozen while dead; see starter/ablation_ball_motion.py)")
     parser.add_argument("--no-dynamics", action="store_true",
                         help="drop the 36 ball-independent team-movement features (default: used; starter/ablation_integration.py)")
+    parser.add_argument("--no-setpiece", action="store_true",
+                        help="drop the 14 ball-independent set-piece / stoppage features (default: used; starter/ablation_setpiece.py)")
+    parser.add_argument("--restart-timing", action="store_true",
+                        help="add seconds since / until a restart (Smart Tagging here, degraded IDSSE events in training)")
     parser.add_argument("--hard-training", action="store_true",
                         help="also train on moving-ball / turnover-gap copies of every match (variant V4 of the ablation)")
     args = parser.parse_args()
     ep.DROP_BALL_MOTION = not args.keep_ball_motion
     ep.USE_DYNAMICS = not args.no_dynamics
+    ep.USE_SETPIECE = not args.no_setpiece
+    ep.USE_RESTART = args.restart_timing
     main(args.out, args.model, advanced=not args.base_features, control_s=args.control_s,
          boundary=not args.no_boundary, motion=not args.no_motion, augment=not args.no_augment,
          domain=not args.no_domain, temporal=not args.no_temporal, skillcorner=args.with_skillcorner,

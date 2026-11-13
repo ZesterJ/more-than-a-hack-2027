@@ -116,3 +116,31 @@ def test_window_mean_and_temporal_block_are_finite_and_causal_where_named():
     assert ep._window_mean(a, 0, 2)[5] == 6.0             # mean of a[5..7]
     assert ep._window_mean(np.array([np.nan, 2.0, 4.0]), -1, 1)[0] == 2.0   # NaN-aware, edge truncated
     assert len(ep.TEMPORAL) == 31 and len(set(ep.TEMPORAL)) == 31
+
+
+def test_setpiece_block_reads_players_only():
+    import numpy as np
+    import external_pipeline as ep
+    n = 60
+    P = np.full((n, 4, 3), np.nan, dtype=np.float32)
+    P[:, 0] = (0.30, 0.50, 0.2)            # home, own half, standing still
+    P[:, 1] = (0.40, 0.001, 0.1)           # home, on the touchline
+    P[:, 2] = (0.70, 0.50, 6.0)            # away, own half, sprinting
+    trk = dict(players=P, ball=np.full((n, 3), np.nan, dtype=np.float32))   # the ball is never seen
+    B = ep.setpiece_block(trk, np.array([True, True, False, False]), None, None)
+    col = {k: B[:, i] for i, k in enumerate(ep.SETPIECE)}
+    assert B.shape == (n, len(ep.SETPIECE)) and np.isfinite(B).all()
+    assert col["sp_touchline_d"][0] < 0.1 and abs(col["sp_touchline_spd"][0] - 0.1) < 1e-6
+    assert col["sp_own_half_share"][0] == 1.0 and col["sp_n_slow"][0] == 2.0
+    assert abs(col["sp_speed_max"][0] - 6.0) < 1e-6
+
+
+def test_restart_block_counts_within_each_half():
+    import numpy as np
+    import external_pipeline as ep
+    period = np.r_[np.ones(500), 2 * np.ones(500)]
+    B = ep.restart_block(1000, [100, 600], period)
+    since, until = B[:, 0], B[:, 1]
+    assert abs(since[125] - 1.0) < 1e-6 and until[50] == 2.0
+    assert until[400] == ep.RESTART_CAP_S            # the half-two restart is not visible from half one
+    assert abs(until[500] - 4.0) < 1e-6 and since[500] == ep.RESTART_CAP_S

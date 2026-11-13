@@ -68,11 +68,12 @@ def idsse_files(match):
     com = "DFL-COM-000001" if match in ("J03WMX", "J03WN1") else "DFL-COM-000002"
     tag = "{}_DFL-MAT-{}.xml".format(com, match)
     return {"positions": os.path.join(IDSSE_DIR, "DFL_04_03_positions_raw_observed_" + tag),
-            "info": os.path.join(IDSSE_DIR, "DFL_02_01_matchinformation_" + tag)}
+            "info": os.path.join(IDSSE_DIR, "DFL_02_01_matchinformation_" + tag),
+            "events": os.path.join(IDSSE_DIR, "DFL_03_02_events_raw_" + tag)}
 
 
 def fetch_idsse(matches=IDSSE_MATCHES):
-    """Download IDSSE (Sportec, CC-BY 4.0) positions + match info: ~370 MB per match, 2.6 GB for all 7."""
+    """Download IDSSE (Sportec, CC-BY 4.0) positions, match info and events: ~370 MB per match, 2.6 GB for all 7."""
     import urllib.request
     for m in matches:
         for path in idsse_files(m).values():
@@ -374,6 +375,53 @@ def apply_occlusion(trk, missing_pattern):
     ball = trk["ball"].copy()
     ball[mask] = np.nan
     return {**trk, "ball": ball}
+
+
+RESTART_TYPES = ("KickOff", "ThrowIn", "GoalKick", "CornerKick", "FreeKick", "Penalty")
+
+
+def idsse_restarts(match, cache=True):
+    """{type: frame indices} of the restart events (kick-offs, throw-ins, goal kicks, corners, free kicks, penalties)
+    of an IDSSE match, as indices into load_idsse's concatenated arrays.
+
+    Events carry wall-clock times; the ball's frames carry a timestamp too, so each event is placed on the ball frame
+    of its half that is closest in time. External data only."""
+    import re
+    from datetime import datetime
+    cpath = os.path.join(IDSSE_DIR, "cache", match + "_restarts.npz")
+    if cache and os.path.isfile(cpath):
+        z = np.load(cpath)
+        return {k: z[k] for k in z.files}
+    files = idsse_files(match)
+    sections, cur = [], None                                   # [(t0 seconds, n_frames)] per half, in file order
+    with open(files["positions"], encoding="utf-8") as handle:
+        for line in handle:
+            if line.startswith("<FrameSet"):
+                cur = None
+                if 'TeamId="BALL"' in line:
+                    cur = [None, 0]
+                    sections.append(cur)
+                continue
+            if cur is not None and line.startswith("<Frame "):
+                if cur[0] is None:
+                    cur[0] = datetime.fromisoformat(re.search(r' T="([^"]+)"', line).group(1)).timestamp()
+                cur[1] += 1
+    starts = np.cumsum([0] + [n for _, n in sections[:-1]])
+    txt = open(files["events"], encoding="utf-8").read()
+    pat = r'<Event [^>]*?EventTime="([^"]+)"[^>]*>\s*<(' + "|".join(RESTART_TYPES) + r')\b'
+    out = {t: [] for t in RESTART_TYPES}
+    for when, kind in re.findall(pat, txt):
+        t = datetime.fromisoformat(when).timestamp()
+        for (t0, n), off in zip(sections, starts):
+            k = int(round((t - t0) * FPS))
+            if 0 <= k < n:
+                out[kind].append(off + k)
+                break
+    out = {k: np.array(sorted(v), dtype=np.int64) for k, v in out.items()}
+    if cache:
+        os.makedirs(os.path.dirname(cpath), exist_ok=True)
+        np.savez(cpath, **out)
+    return out
 
 
 def dead_ball_drift(trk, seed=0, speed=4.0):

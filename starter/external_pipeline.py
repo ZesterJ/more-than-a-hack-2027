@@ -362,14 +362,188 @@ BALL_MOTION = (
 DROP_BALL_MOTION = True    # module default for featureset(); on the evidence of starter/ablation_ball_motion.py and ablation_integration.py
 
 
+# Ball-independent SET-PIECE and STOPPAGE geometry. Restarts have shapes that do not need the ball: a player standing on
+# the touchline (throw-in) or at a corner flag, both teams in their own halves (kick-off), a crowded box, and nobody
+# sprinting. Built from player positions and speeds only, so they work when the ball is missing or drifting.
+SETPIECE = [
+    "sp_touchline_d", "sp_touchline_spd", "sp_corner_d", "sp_goalline_d", "sp_own_half_share",
+    "sp_box_count", "sp_box_count_roll1s", "sp_speed_max", "sp_speed_p90", "sp_speed_std",
+    "sp_speed_max_roll2s", "sp_speed_max_drop2s", "sp_opp_gap", "sp_n_slow",
+]
+USE_SETPIECE = True    # module default for featureset(); on the evidence of starter/ablation_setpiece.py
+
+
+def setpiece_block(trk, is_home, X22, E):
+    """Player-only cues for stoppages and restarts (see SETPIECE). Nothing here reads the ball or any labels."""
+    length, width = GAMES[GAME]["pitch"]
+    P = trk["players"]
+    n = len(P)
+    px, py, ps = P[:, :, 0] * length, P[:, :, 1] * width, P[:, :, 2]
+    seen = ~np.isnan(px)
+    big = 1e3
+
+    def nanmin_idx(d):
+        d = np.where(np.isnan(d), big, d)
+        i = d.argmin(1)
+        return d[np.arange(n), i], i
+
+    a = {}
+    touch = np.minimum(py, width - py)
+    a["sp_touchline_d"], ti = nanmin_idx(touch)
+    a["sp_touchline_spd"] = np.nan_to_num(ps[np.arange(n), ti], nan=0.0)
+    corner = np.minimum.reduce([np.hypot(px - cx, py - cy) for cx in (0.0, length) for cy in (0.0, width)])
+    a["sp_corner_d"], _ = nanmin_idx(corner)
+    a["sp_goalline_d"], _ = nanmin_idx(np.minimum(px, length - px))
+    own = np.where(is_home[None, :], px < length / 2, px > length / 2)          # home attacks +x
+    with np.errstate(invalid="ignore"):
+        a["sp_own_half_share"] = np.where(seen.sum(1) > 0, (own & seen).sum(1) / np.maximum(seen.sum(1), 1), 0.5)
+        inbox = ((px < 16.5) | (px > length - 16.5)) & (np.abs(py - width / 2) < 20.16)
+    a["sp_box_count"] = (inbox & seen).sum(1).astype(float)
+    a["sp_box_count_roll1s"] = _window_mean(a["sp_box_count"], -FPS // 2, FPS // 2)
+    spd = np.where(seen, ps, np.nan)
+    with np.errstate(all="ignore"):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            a["sp_speed_max"] = np.nan_to_num(np.nanmax(spd, 1))
+            a["sp_speed_p90"] = np.nan_to_num(np.nanpercentile(spd, 90, axis=1))
+            a["sp_speed_std"] = np.nan_to_num(np.nanstd(spd, 1))
+    a["sp_n_slow"] = ((spd < 1.0) & seen).sum(1).astype(float)
+    roll = _window_mean(a["sp_speed_max"], -FPS, FPS)
+    a["sp_speed_max_roll2s"] = roll
+    a["sp_speed_max_drop2s"] = _window_mean(a["sp_speed_max"], -2 * FPS, 0) - _window_mean(a["sp_speed_max"], 0, 2 * FPS)
+    # distance from each player to the nearest opponent, averaged: duels in live play, separation at restarts
+    h, w_ = np.where(is_home)[0], np.where(~is_home)[0]
+    d = np.hypot(px[:, h, None] - px[:, None, w_], py[:, h, None] - py[:, None, w_])
+    d = np.where(np.isnan(d), np.inf, d)
+    with np.errstate(invalid="ignore"):
+        near = np.concatenate([d.min(2), d.min(1)], axis=1)
+        near = np.where(np.isfinite(near), near, np.nan)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            a["sp_opp_gap"] = np.nan_to_num(np.nanmean(near, 1), nan=10.0)
+    return np.nan_to_num(np.column_stack([a[k] for k in SETPIECE]).astype(np.float32))
+
+
+# RESTART timing. Every restart (throw-in, goal kick, corner, free kick, kick-off) ends a dead-ball stretch, so "how long
+# until the next restart / since the last one" is a strong dead-ball cue that does not need the ball. Training uses the
+# external match's own restart events, degraded to look like the automatic Smart Tagging of the provided match (only
+# some restarts tagged, times off by about a second, a few false alarms); prediction uses that Smart Tagging.
+RESTART = ["rs_since", "rs_until", "rs_near"]
+USE_RESTART = False    # module default for featureset(); switched on only if the external ablation says so
+RESTART_CAP_S = 30.0
+SMART_TAG_TYPES = {"Throw-in": "ThrowIn", "Corner Kick": "CornerKick", "Goal Kick": "GoalKick",
+                   "Free Kick": "FreeKick", "Kick Off (After Goal)": "KickOff", "Kick Off (Start)": "KickOff"}
+
+
+def smart_tag_restarts(game=GAME, lead_s=None):
+    """(frames, types) of the set-piece restarts in the provided match's Smart Tagging.
+
+    A Smart Tagging set-piece phase starts before the ball is played (it includes the set-up), so each start frame is
+    moved forward by `lead_s` seconds (None = estimate_smart_tag_lead())."""
+    import load_smart_tagging as st
+    lead_s = estimate_smart_tag_lead(game) if lead_s is None else lead_s
+    frames, types = [], []
+    for phase in st.load(game):
+        if phase["code"].lower() == "set pieces":
+            frames.append(int(phase["start_frame"]) + int(round(lead_s * FPS)))
+            types.append(SMART_TAG_TYPES.get(str(dict(phase["tags"]).get("Type", "")), "Other"))
+    order = np.argsort(frames)
+    return np.array(frames, dtype=np.int64)[order], np.array(types)[order]
+
+
+def estimate_smart_tag_lead(game=GAME, window_s=20, search_s=10):
+    """Seconds between a Smart Tagging set-piece start and the actual restart, from tracking alone (no labels).
+
+    Players slow down before a restart and speed up after it. The average team-speed profile around the IDSSE
+    restart events (external, exact times) is compared with the profile around the provided match's Smart Tagging
+    set-piece starts; the shift that best aligns the two is the lead. Cached next to the data."""
+    import load_smart_tagging as st
+    from baseline import team_of_each_track
+    from features import build_features, load_tracking
+    from games import asset_paths
+    cpath = os.path.join(ROOT, "data", "cache", "smart_tag_lead_%s.txt" % game)
+    if os.path.isfile(cpath):
+        return float(open(cpath).read())
+    W, S = window_s * FPS, search_s * FPS
+
+    def profile(speed, frames):
+        rows = [speed[k - W:k + W + 1] for k in frames if k - W >= 0 and k + W < len(speed)]
+        p = np.nanmean(rows, 0)
+        return (p - p.mean()) / p.std()
+
+    ref = np.mean([profile(build_features(t, is_home=t["is_home"]).overall_speed.values,
+                           np.concatenate(list(ext.idsse_restarts(m).values())))
+                   for m in ext.IDSSE_MATCHES for t in [ext.load_idsse(m)]], 0)
+    n = GAMES[game]["n_video_frames"]
+    trk = load_tracking(n)
+    is_home = team_of_each_track(asset_paths()["atd_meta"]) == 0
+    starts = [int(ph["start_frame"]) for ph in st.load(game) if ph["code"].lower() == "set pieces"]
+    tag = profile(build_features(trk, is_home=is_home).overall_speed.values, starts)
+    mid = slice(W - S, W + S + 1)
+    shifts = range(-S, S + 1, 5)
+    best = max(shifts, key=lambda s: np.corrcoef(ref[W - S - s:W + S + 1 - s], tag[mid])[0, 1])
+    lead = best / FPS                      # restart = tag start + lead
+    os.makedirs(os.path.dirname(cpath), exist_ok=True)
+    open(cpath, "w").write("%.2f" % lead)
+    return lead
+
+
+def degraded_restarts(match, keep, jitter_s=1.0, false_rate=0.1, seed=0):
+    """An external match's restart frames, thinned per type to `keep` probabilities, jittered and with false alarms."""
+    rng = np.random.default_rng(seed + int.from_bytes(match.encode(), "little") % 10007)
+    by_type = ext.idsse_restarts(match)
+    n = len(ext.load_idsse(match)["labels"])
+    out = []
+    for kind, frames in by_type.items():
+        kept = frames[rng.random(len(frames)) < keep.get(kind, 0.5)]
+        out.append(kept + np.rint(rng.normal(0, jitter_s * FPS, len(kept))).astype(np.int64))
+    real = sum(len(f) for f in by_type.values())
+    out.append(rng.integers(0, n, rng.poisson(false_rate * real)))
+    return np.clip(np.sort(np.concatenate(out)), 0, n - 1)
+
+
+def smart_tag_keep_rates():
+    """Share of each restart type that Smart Tagging finds, estimated as (tagged in the provided match) / (average per
+    IDSSE match). Uses the provided Smart Tagging and external events only, no labels."""
+    _, types = smart_tag_restarts()
+    rates = {}
+    for kind in ext.RESTART_TYPES:
+        avg = np.mean([len(ext.idsse_restarts(m)[kind]) for m in ext.IDSSE_MATCHES])
+        rates[kind] = float(min(1.0, (types == kind).sum() / avg)) if avg > 0 else 1.0
+    return rates
+
+
+def restart_block(n, restarts, period=None):
+    """Seconds since the last and until the next restart (capped), within each half."""
+    since = np.full(n, RESTART_CAP_S)
+    until = np.full(n, RESTART_CAP_S)
+    cap = int(RESTART_CAP_S * FPS)
+    for a, b in _segments(n, period):
+        r = np.asarray(restarts)
+        r = r[(r >= a) & (r < b)] - a
+        idx = np.arange(b - a)
+        if len(r):
+            mark = np.zeros(b - a, dtype=bool)
+            mark[r] = True
+            last = np.maximum.accumulate(np.where(mark, idx, -10 ** 9))
+            nxt = np.minimum.accumulate(np.where(mark, idx, 10 ** 9)[::-1])[::-1]
+            since[a:b] = np.minimum(idx - last, cap) / FPS
+            until[a:b] = np.minimum(nxt - idx, cap) / FPS
+    return np.column_stack([since, until, np.minimum(since, until)]).astype(np.float32)
+
+
 def featureset(trk, is_home, advanced=False, boundary=False, motion=False, temporal=False, drop_ball_motion=None,
-               dynamics=None):
+               dynamics=None, setpiece=None, restart=None):
     """(X, aux): 30 model features (+20 advanced ones if asked) and the per-frame arrays the decoder rules need.
 
     drop_ball_motion removes the BALL_MOTION columns (None = the module default DROP_BALL_MOTION); dynamics appends the
     ball-independent team-movement block (None = the module default USE_DYNAMICS)."""
     drop_ball_motion = DROP_BALL_MOTION if drop_ball_motion is None else drop_ball_motion
     dynamics = USE_DYNAMICS if dynamics is None else dynamics
+    setpiece = USE_SETPIECE if setpiece is None else setpiece
+    restart = USE_RESTART if restart is None else restart
     X22 = build_features(trk, is_home=is_home)
     E = build_extra(trk, X22)
     aux = dict(d_min=E.d_min.values, ball_missing=X22.ball_missing.values,
@@ -393,6 +567,14 @@ def featureset(trk, is_home, advanced=False, boundary=False, motion=False, tempo
     if dynamics:
         X = np.hstack([X, dynamics_block(trk, is_home, X22, E)])
         out_names += DYNAMICS
+    if setpiece:
+        X = np.hstack([X, setpiece_block(trk, is_home, X22, E)])
+        out_names += SETPIECE
+    if restart:
+        if "restarts" not in trk:
+            raise ValueError("restart features need trk['restarts'] (restart frame indices)")
+        X = np.hstack([X, restart_block(len(X), trk["restarts"], trk.get("period"))])
+        out_names += RESTART
     if drop_ball_motion:
         X = X[:, [i for i, n in enumerate(out_names) if n not in BALL_MOTION]]
     return X, aux
@@ -436,7 +618,8 @@ def mirror_tracking(trk, mode):
 
 
 def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, control_s=None, boundary=False,
-                   motion=False, mirror=None, augment=False, temporal=False, loader=None, drift=False, turnover=False):
+                   motion=False, mirror=None, augment=False, temporal=False, loader=None, drift=False, turnover=False,
+                   restart_keep=None):
     """{match: dict(X, aux, y, period, aug)}, oriented so the home team attacks +x, with `pattern` applied.
 
     `augment` also stores `aug`: (X, y) pairs of the same match mirrored top-to-bottom and left-to-right (with the
@@ -457,6 +640,10 @@ def load_idsse_sets(pattern=None, matches=ext.IDSSE_MATCHES, advanced=False, con
     for m in matches:
         trk = (loader or ext.load_idsse)(m)
         trk = ext.orient_home_attacks_right(trk, trk["is_home"], ext.period_segments(trk))
+        if USE_RESTART:
+            if loader is not None:
+                raise ValueError("restart timing needs restart events, which only the IDSSE loader provides")
+            trk = {**trk, "restarts": degraded_restarts(m, restart_keep or smart_tag_keep_rates())}
         if drift:
             trk = ext.dead_ball_drift(trk)
         if pattern is not None:
@@ -498,6 +685,8 @@ def target_features(advanced=True, boundary=True, motion=True, temporal=True, st
     trk = load_tracking(n_frames)
     is_home = team_of_each_track(asset_paths()["atd_meta"]) == 0
     trk = ext.orient_home_attacks_right(trk, is_home, spans)
+    if USE_RESTART:
+        trk = {**trk, "restarts": smart_tag_restarts()[0]}
     X, _ = featureset(trk, is_home, advanced, boundary, motion, temporal)
     return np.vstack([X[a:b][::step] for a, b in spans])
 

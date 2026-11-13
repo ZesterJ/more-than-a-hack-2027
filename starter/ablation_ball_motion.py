@@ -61,6 +61,7 @@ def score(P, match):
 
 
 def main():
+    ep.USE_SETPIECE, ep.USE_RESTART = False, False          # the feature set as it was when this ablation was run
     pattern = ep.ball_unseen_pattern()          # the provided match's ball-gap pattern (tracking only)
     names = column_names()
     print("building features (frozen ball, then moving-when-dead) ...", flush=True)

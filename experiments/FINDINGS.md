@@ -156,6 +156,40 @@ own simulators, and V4 trains on the same simulators, so its extra edge is optim
 `generate_full_submission.py` has `--keep-ball-motion`, `--no-dynamics` and `--hard-training` (V4). The executed
 notebook 04 and the technical document describe the earlier behaviour and need regenerating.
 
+## Set-piece geometry and restart timing (Jordan, external data only)
+
+Two ball-independent dead-ball blocks on top of the integration defaults (V3), judged with the same four test conditions
+(`starter/ablation_setpiece.py`, `starter/ablation_restart.py`). Averages over the four conditions:
+
+| variant | spellF1 | turnover detection (1 s) | dead-ball recall | macro-F1 |
+|---|---|---|---|---|
+| V3 integration default | 0.619 | 0.466 | 0.933 | 0.875 |
+| **V5 V3 + 14 set-piece features** | **0.630** | **0.494** | **0.945** | **0.882** |
+| R5 V5 + restart timing | 0.631 | 0.493 | 0.947 | 0.884 |
+| V4 V3 + hard-condition training | 0.631 | 0.497 | 0.947 | 0.882 |
+| V6 V4 + set-piece | 0.636 | 0.511 | 0.954 | 0.887 |
+
+- **Set-piece geometry** (`external_pipeline.SETPIECE`, player positions and speeds only): nearest player to the touchline
+  and that player's speed, nearest player to a corner flag and to a goal line, share of players in their own half
+  (kick-offs), players in the boxes, the fastest and 90th-percentile player speed and their spread, how many players
+  are slow, the drop in top speed over 2 s, and the average gap to the nearest opponent. V5 beats V3 on all four
+  conditions and all four metrics (+0.011 spellF1, +0.028 turnover detection); V6 beats V4 on all four too. On by
+  default (`USE_SETPIECE`, `--no-setpiece` turns it off). On IDSSE the fastest player averages 3.1 m/s in dead ball
+  against 5.0 m/s in play, and about 8 players are slow against 3.
+- **Restart timing** (`external_pipeline.RESTART`): seconds since the last and until the next restart. Training uses each
+  IDSSE match's own restart events (`external.idsse_restarts`), thinned per type to the share the provided Smart
+  Tagging finds (59% of throw-ins and goal kicks, 20% of free kicks, all corners and kick-offs), jittered by 1 s and
+  with 10% false alarms; prediction uses the provided match's Smart Tagging set pieces. No labels are used to place
+  or align any of it. On external data it adds about nothing on top of the set-piece features (R5 vs V5), so it stays
+  off (`--restart-timing`). External dead-ball recall is already about 0.95, so there is little room there; whether it
+  helps on the provided match cannot be checked without its labels.
+- **Smart Tagging timing.** A set-piece phase starts before the restart: aligning the average team-speed profile around
+  the tagged starts with the profile around IDSSE's exact restart events (tracking only) puts the restart 5.4 s after
+  the tag start (correlation 0.98 at that shift against 0.45 at zero). `estimate_smart_tag_lead()` recomputes this.
+- **IDSSE event clocks** differ from the tracking clock by -1.4 to +2.0 s per match (median offset to the nearest
+  dead-to-live change). The training noise (1 s jitter) does not model this; the held-out match's own labels are not
+  used to correct it, because that would leak into the leave-one-match-out score.
+
 ## Feature importance (loss-based, held-out)
 
 `python -m experiments.feature_importance --target team` (home vs away on live frames) and
